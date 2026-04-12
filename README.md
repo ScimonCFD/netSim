@@ -61,6 +61,12 @@ Run the default example:
 PYTHONPATH=src python3 -m netSim.main
 ```
 
+Launch the first GUI prototype:
+
+```bash
+PYTHONPATH=src python3 -m netSim.gui.app
+```
+
 Run the smoke-test suite:
 
 ```bash
@@ -102,7 +108,7 @@ Some important limits of the current branch are:
 - no energy equation yet
 - no transient solving yet
 - no multicomponent or multiphase models yet
-- no GUI yet
+- only a very early GUI prototype
 - explicit, not implicit, pressure relaxation
 
 ## Near-Term Direction
