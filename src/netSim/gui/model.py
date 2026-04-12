@@ -14,6 +14,10 @@ DEFAULT_LIBRARY_MATERIAL = {
     "density_kg_per_m3": "998.25",
     "viscosity_pa_s": "0.001",
 }
+DEFAULT_PRESSURE_DROP_MODEL = {
+    "library_key": "colebrook_white",
+    "name": "Colebrook-White",
+}
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class CanvasScene:
     nodes: List[CanvasNode] = field(default_factory=list)
     links: List[CanvasLink] = field(default_factory=list)
     material: Dict[str, str] = field(default_factory=dict)
+    pressure_drop_model: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PRESSURE_DROP_MODEL))
     solver_settings: Dict[str, float | int] = field(default_factory=dict)
     initial_node_pressures_pa: Dict[int, float] = field(default_factory=dict)
     _next_node_id: int = 1
@@ -193,6 +198,7 @@ class CanvasScene:
         self.nodes.clear()
         self.links.clear()
         self.material = {}
+        self.pressure_drop_model = dict(DEFAULT_PRESSURE_DROP_MODEL)
         self.solver_settings.clear()
         self.initial_node_pressures_pa.clear()
         self._next_node_id = 1
@@ -202,6 +208,9 @@ class CanvasScene:
 
     def update_material(self, material: Dict[str, str]) -> None:
         self.material = dict(material)
+
+    def update_pressure_drop_model(self, pressure_drop_model: Dict[str, str]) -> None:
+        self.pressure_drop_model = dict(pressure_drop_model)
 
     @staticmethod
     def _default_properties(node_type: str) -> Dict[str, str]:

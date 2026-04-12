@@ -5,7 +5,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .io import build_network_case_from_scene, build_solver_from_scene, load_scene_from_file
-from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene, DEFAULT_LIBRARY_MATERIAL
+from .model import (
+    CanvasLink,
+    CanvasLinkComponent,
+    CanvasNode,
+    CanvasScene,
+    DEFAULT_LIBRARY_MATERIAL,
+    DEFAULT_PRESSURE_DROP_MODEL,
+)
 
 
 class ToolTip:
@@ -54,6 +61,11 @@ class NetSimGui:
             "viscosity_pa_s": "0.001",
         }
     }
+    PRESSURE_DROP_MODEL_LIBRARY = {
+        "colebrook_white": {
+            "name": "Colebrook-White",
+        }
+    }
     METRIC_OPTIONS = (
         ("Max abs pressure correction (Pa)", "pressure_correction_abs_pa"),
         ("Mean abs pressure correction (Pa)", "pressure_correction_mean_abs_pa"),
@@ -85,6 +97,8 @@ class NetSimGui:
         self.convergence_history = {"laminar": [], "turbulent": []}
         self.status_var = tk.StringVar(value="Select a node type from the palette.")
         self.tool_var = tk.StringVar(value="No tool selected")
+        self.material_summary_var = tk.StringVar(value=self._material_summary_text())
+        self.pressure_drop_summary_var = tk.StringVar(value=self._pressure_drop_summary_text())
 
         self._build_menu()
         self._build_layout()
@@ -101,6 +115,13 @@ class NetSimGui:
         material_menu = tk.Menu(menu_bar, tearoff=False)
         material_menu.add_command(label="Define Material", command=self._open_material_dialog)
         menu_bar.add_cascade(label="Material", menu=material_menu)
+
+        physics_menu = tk.Menu(menu_bar, tearoff=False)
+        physics_menu.add_command(
+            label="Define Pressure-Drop Model",
+            command=self._open_pressure_drop_model_dialog,
+        )
+        menu_bar.add_cascade(label="Physics", menu=physics_menu)
 
         self.root.config(menu=menu_bar)
 
@@ -159,6 +180,28 @@ class NetSimGui:
             padding=6,
         ).pack(anchor="w", pady=(4, 0))
 
+        ttk.Separator(palette, orient="horizontal").pack(fill="x", pady=10)
+
+        ttk.Label(palette, text="Material").pack(anchor="w")
+        ttk.Label(
+            palette,
+            textvariable=self.material_summary_var,
+            width=26,
+            relief="groove",
+            padding=6,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0), fill="x")
+
+        ttk.Label(palette, text="Pipe Model").pack(anchor="w", pady=(10, 0))
+        ttk.Label(
+            palette,
+            textvariable=self.pressure_drop_summary_var,
+            width=26,
+            relief="groove",
+            padding=6,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0), fill="x")
+
         canvas_frame = ttk.Frame(container)
         canvas_frame.pack(side="left", fill="both", expand=True)
 
@@ -203,6 +246,7 @@ class NetSimGui:
         self.latest_result = None
         self.latest_boundary_results = {}
         self.tool_var.set("No tool selected")
+        self._refresh_global_summaries()
         self.status_var.set("New scene created. Select a node type from the palette.")
 
     def _open_scene(self) -> None:
@@ -230,6 +274,7 @@ class NetSimGui:
         self.latest_result = None
         self.latest_boundary_results = {}
         self.tool_var.set("No tool selected")
+        self._refresh_global_summaries()
         self._redraw_scene()
         self.status_var.set(f"Opened GUI case: {file_path}")
 
@@ -332,6 +377,73 @@ class NetSimGui:
         dialog.focus_set()
         name_entry.focus_set()
 
+    def _open_pressure_drop_model_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Define Pressure-Drop Model")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+
+        model = dict(DEFAULT_PRESSURE_DROP_MODEL)
+        model.update(self.scene.pressure_drop_model)
+
+        library_var = tk.StringVar(
+            master=dialog,
+            value=model.get("library_key", DEFAULT_PRESSURE_DROP_MODEL["library_key"]),
+        )
+
+        ttk.Label(frame, text="Pipe Model Library").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        library_box = ttk.Combobox(
+            frame,
+            textvariable=library_var,
+            state="readonly",
+            values=tuple(self.PRESSURE_DROP_MODEL_LIBRARY.keys()),
+            width=24,
+        )
+        library_box.grid(row=0, column=1, sticky="ew", pady=4)
+
+        selected_name_var = tk.StringVar(
+            master=dialog,
+            value=self.PRESSURE_DROP_MODEL_LIBRARY[library_var.get()]["name"],
+        )
+        ttk.Label(frame, text="Selected Model").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Label(
+            frame,
+            textvariable=selected_name_var,
+            relief="groove",
+            padding=6,
+            width=24,
+        ).grid(row=1, column=1, sticky="ew", pady=4)
+
+        def apply_model_selection(_event: tk.Event | None = None) -> None:
+            selected_name_var.set(
+                self.PRESSURE_DROP_MODEL_LIBRARY[library_var.get()]["name"]
+            )
+
+        library_box.bind("<<ComboboxSelected>>", apply_model_selection)
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=2, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(button_row, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Save",
+            command=lambda: self._save_pressure_drop_model_definition(dialog, library_var),
+        ).pack(side="right", padx=(0, 8))
+
+        frame.columnconfigure(1, weight=1)
+        dialog.update_idletasks()
+        dialog.wait_visibility()
+        dialog.grab_set()
+        dialog.focus_set()
+        library_box.focus_set()
+
     def _save_material_definition(
         self,
         dialog: tk.Toplevel,
@@ -374,8 +486,56 @@ class NetSimGui:
             )
             return
         self.scene.update_material(material)
+        self._refresh_global_summaries()
         self.status_var.set(f"Material set to {material['name']}.")
         dialog.destroy()
+
+    def _save_pressure_drop_model_definition(
+        self,
+        dialog: tk.Toplevel,
+        library_var: tk.StringVar,
+    ) -> None:
+        model_key = library_var.get().strip()
+        if model_key not in self.PRESSURE_DROP_MODEL_LIBRARY:
+            messagebox.showerror(
+                "Invalid model",
+                "Select a valid pressure-drop model from the library.",
+                parent=dialog,
+            )
+            return
+
+        model_definition = {
+            "library_key": model_key,
+            "name": self.PRESSURE_DROP_MODEL_LIBRARY[model_key]["name"],
+        }
+        self.scene.update_pressure_drop_model(model_definition)
+        self._refresh_global_summaries()
+        self.status_var.set(f"Pipe pressure-drop model set to {model_definition['name']}.")
+        dialog.destroy()
+
+    def _refresh_global_summaries(self) -> None:
+        self.material_summary_var.set(self._material_summary_text())
+        self.pressure_drop_summary_var.set(self._pressure_drop_summary_text())
+
+    def _material_summary_text(self) -> str:
+        if not self.scene.material:
+            return "Not defined"
+
+        name = self.scene.material.get("name", "Unnamed")
+        density = self.scene.material.get("density_kg_per_m3", "").strip()
+        viscosity = self.scene.material.get("viscosity_pa_s", "").strip()
+        lines = [name]
+        if density:
+            lines.append(f"rho={density} kg/m^3")
+        if viscosity:
+            lines.append(f"mu={viscosity} Pa·s")
+        return "\n".join(lines)
+
+    def _pressure_drop_summary_text(self) -> str:
+        model_name = self.scene.pressure_drop_model.get("name", "").strip()
+        if model_name:
+            return model_name
+        return "Not defined"
 
     def _run_simulation(self) -> None:
         try:

@@ -28,6 +28,7 @@ class GuiIoTests(unittest.TestCase):
         self.assertEqual(len(scene.nodes), 6)
         self.assertEqual(len(scene.links), 6)
         self.assertEqual(scene.material["library_key"], "water_liquid")
+        self.assertEqual(scene.pressure_drop_model["library_key"], "colebrook_white")
         self.assertEqual(scene.get_node(1).properties["pressure"], "251300.0")
         self.assertEqual(scene.get_link(1).components[0].component_type, "pipe")
 
@@ -79,3 +80,11 @@ class GuiIoTests(unittest.TestCase):
                 case = build_network_case_from_scene(scene)
                 result = build_solver_from_scene(scene).solve(case)
                 self.assertTrue(result.converged, msg=f"{gui_path} did not converge")
+
+    def test_build_solver_uses_supported_default_pressure_drop_model(self) -> None:
+        scene = load_scene_from_file(self._pipe_only_case_path())
+
+        solver = build_solver_from_scene(scene)
+
+        self.assertEqual(scene.pressure_drop_model["library_key"], "colebrook_white")
+        self.assertEqual(type(solver.turbulent_pipe_correlation).__name__, "ColebrookPipeCorrelation")

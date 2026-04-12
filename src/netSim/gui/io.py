@@ -6,10 +6,17 @@ from pathlib import Path
 from netSim.core.case import FlowBoundary, NetworkCase, PressureBoundary
 from netSim.core.components import Fitting, Pipe
 from netSim.core.settings import SolverSettings
+from netSim.closures import ColebrookPipeCorrelation
 from netSim.properties.single_component import SingleComponentFluid
 from netSim.solvers import SteadyIsothermalIncompressibleSolver
 
-from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene
+from .model import (
+    CanvasLink,
+    CanvasLinkComponent,
+    CanvasNode,
+    CanvasScene,
+    DEFAULT_PRESSURE_DROP_MODEL,
+)
 
 
 def scene_from_dict(data: dict) -> CanvasScene:
@@ -58,6 +65,10 @@ def scene_from_dict(data: dict) -> CanvasScene:
     scene.material = {
         key: str(value) for key, value in data.get("material", {}).items()
     }
+    scene.pressure_drop_model = dict(DEFAULT_PRESSURE_DROP_MODEL)
+    scene.pressure_drop_model.update(
+        {key: str(value) for key, value in data.get("pressure_drop_model", {}).items()}
+    )
     scene.solver_settings = dict(data.get("solver_settings", {}))
     scene.initial_node_pressures_pa = {
         int(node_id): float(value)
@@ -190,11 +201,24 @@ def build_network_case_from_scene(scene: CanvasScene) -> NetworkCase:
 
 
 def build_solver_from_scene(scene: CanvasScene) -> SteadyIsothermalIncompressibleSolver:
+    pressure_drop_model_key = scene.pressure_drop_model.get("library_key", "")
+    if pressure_drop_model_key != "colebrook_white":
+        raise ValueError(
+            f"Unsupported pipe pressure-drop model '{pressure_drop_model_key}'."
+        )
+
+    settings = SolverSettings(**scene.solver_settings) if scene.solver_settings else SolverSettings()
+    turbulent_pipe_correlation = ColebrookPipeCorrelation()
+
     if scene.solver_settings:
         return SteadyIsothermalIncompressibleSolver(
-            SolverSettings(**scene.solver_settings)
+            settings=settings,
+            turbulent_pipe_correlation=turbulent_pipe_correlation,
         )
-    return SteadyIsothermalIncompressibleSolver(SolverSettings())
+    return SteadyIsothermalIncompressibleSolver(
+        settings=settings,
+        turbulent_pipe_correlation=turbulent_pipe_correlation,
+    )
 
 
 def _required_float(

@@ -52,6 +52,12 @@ class GuiModelTests(unittest.TestCase):
 
         self.assertEqual(scene.material, {})
 
+    def test_scene_starts_with_default_pressure_drop_model(self) -> None:
+        scene = CanvasScene()
+
+        self.assertEqual(scene.pressure_drop_model["library_key"], "colebrook_white")
+        self.assertEqual(scene.pressure_drop_model["name"], "Colebrook-White")
+
     def test_add_link_connects_two_existing_nodes(self) -> None:
         scene = CanvasScene()
         scene.set_active_tool("source")
