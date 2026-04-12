@@ -38,6 +38,8 @@ class CanvasScene:
     active_tool: Optional[str] = None
     nodes: List[CanvasNode] = field(default_factory=list)
     links: List[CanvasLink] = field(default_factory=list)
+    solver_settings: Dict[str, float | int] = field(default_factory=dict)
+    initial_node_pressures_pa: Dict[int, float] = field(default_factory=dict)
     _next_node_id: int = 1
     _next_link_id: int = 1
     _next_component_id: int = 1
@@ -182,6 +184,8 @@ class CanvasScene:
     def clear(self) -> None:
         self.nodes.clear()
         self.links.clear()
+        self.solver_settings.clear()
+        self.initial_node_pressures_pa.clear()
         self._next_node_id = 1
         self._next_link_id = 1
         self._next_component_id = 1
@@ -216,6 +220,7 @@ class CanvasScene:
                 "num_segments": "1",
             }
         return {
+            "diameter_m": "",
             "loss_coefficient": "1.5",
         }
 

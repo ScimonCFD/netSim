@@ -23,14 +23,19 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
         self.turbulent_pipe_correlation = turbulent_pipe_correlation or ColebrookPipeCorrelation()
         self.fitting_correlation = fitting_correlation or MinorLossModel()
 
-    def solve(self, case) -> SolveResult:
+    def solve(self, case, progress_callback=None) -> SolveResult:
         network_state = build_network_state(case)
         self._initialise_pressure_field(network_state, case)
 
-        laminar_history, laminar_metrics = self._solve_laminar(network_state, case.fluid_model)
+        laminar_history, laminar_metrics = self._solve_laminar(
+            network_state,
+            case.fluid_model,
+            progress_callback=progress_callback,
+        )
         turbulent_history, turbulent_metrics, converged = self._solve_turbulent(
             network_state,
             case.fluid_model,
+            progress_callback=progress_callback,
         )
 
         node_pressures = {
@@ -105,27 +110,43 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
 
         raise ValueError("At least one pressure boundary is required.")
 
-    def _solve_laminar(self, network_state, fluid_model) -> tuple[list[float], list[IterationMetrics]]:
+    def _solve_laminar(
+        self,
+        network_state,
+        fluid_model,
+        progress_callback=None,
+    ) -> tuple[list[float], list[IterationMetrics]]:
         history = []
         metrics_history = []
-        for _ in range(self._get_laminar_iteration_count(network_state)):
+        for iteration_index in range(self._get_laminar_iteration_count(network_state)):
             self._update_velocities(network_state, fluid_model, laminar=True)
             self._update_mass_flows(network_state, fluid_model)
             couplings = self._compute_couplings(network_state, fluid_model, laminar=True)
             matrix, vector = assemble_pressure_system(network_state, couplings)
             correction = solve_linear_system(matrix, vector)
-            correction_abs, correction_rel = self._apply_pressure_correction(network_state, correction)
+            correction_abs, correction_mean_abs, correction_rel = self._apply_pressure_correction(
+                network_state,
+                correction,
+            )
             history.append(correction_abs)
             self._update_velocities(network_state, fluid_model, laminar=True)
             self._update_mass_flows(network_state, fluid_model)
             max_mass_imbalance = self._compute_max_nodal_mass_imbalance(network_state)
             metrics_history.append(
-                IterationMetrics(
-                    pressure_correction_abs_pa=correction_abs,
-                    pressure_correction_rel=correction_rel,
-                    max_nodal_mass_imbalance_kg_per_s=max_mass_imbalance,
+                self._build_iteration_metrics(
+                    network_state,
+                    correction_abs,
+                    correction_mean_abs,
+                    correction_rel,
+                    max_mass_imbalance,
                 )
             )
+            if progress_callback is not None:
+                progress_callback(
+                    "laminar",
+                    iteration_index + 1,
+                    metrics_history[-1],
+                )
         return history, metrics_history
 
     def _get_laminar_iteration_count(self, network_state) -> int:
@@ -137,28 +158,44 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
             return self.settings.laminar_iterations_with_fittings
         return self.settings.laminar_iterations_without_fittings
 
-    def _solve_turbulent(self, network_state, fluid_model) -> tuple[list[float], list[IterationMetrics], bool]:
+    def _solve_turbulent(
+        self,
+        network_state,
+        fluid_model,
+        progress_callback=None,
+    ) -> tuple[list[float], list[IterationMetrics], bool]:
         history = []
         metrics_history = []
         converged = False
-        for _ in range(self.settings.turbulent_iterations):
+        for iteration_index in range(self.settings.turbulent_iterations):
             self._update_velocities(network_state, fluid_model, laminar=False)
             self._update_mass_flows(network_state, fluid_model)
             couplings = self._compute_couplings(network_state, fluid_model, laminar=False)
             matrix, vector = assemble_pressure_system(network_state, couplings)
             correction = solve_linear_system(matrix, vector)
-            correction_abs, correction_rel = self._apply_pressure_correction(network_state, correction)
+            correction_abs, correction_mean_abs, correction_rel = self._apply_pressure_correction(
+                network_state,
+                correction,
+            )
             history.append(correction_abs)
             self._update_velocities(network_state, fluid_model, laminar=False)
             self._update_mass_flows(network_state, fluid_model)
             max_mass_imbalance = self._compute_max_nodal_mass_imbalance(network_state)
             metrics_history.append(
-                IterationMetrics(
-                    pressure_correction_abs_pa=correction_abs,
-                    pressure_correction_rel=correction_rel,
-                    max_nodal_mass_imbalance_kg_per_s=max_mass_imbalance,
+                self._build_iteration_metrics(
+                    network_state,
+                    correction_abs,
+                    correction_mean_abs,
+                    correction_rel,
+                    max_mass_imbalance,
                 )
             )
+            if progress_callback is not None:
+                progress_callback(
+                    "turbulent",
+                    iteration_index + 1,
+                    metrics_history[-1],
+                )
             if (
                 (
                     correction_abs <= self.settings.pressure_correction_abs_tolerance_pa
@@ -169,6 +206,28 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
                 converged = True
                 break
         return history, metrics_history, converged
+
+    def _build_iteration_metrics(
+        self,
+        network_state,
+        correction_abs: float,
+        correction_mean_abs: float,
+        correction_rel: float,
+        max_mass_imbalance: float,
+    ) -> IterationMetrics:
+        abs_mass_flows = [abs(float(link.mass_flow_kg_per_s)) for link in network_state.components]
+        if abs_mass_flows:
+            mass_flow_max = max(abs_mass_flows)
+        else:
+            mass_flow_max = 0.0
+
+        return IterationMetrics(
+            pressure_correction_abs_pa=correction_abs,
+            pressure_correction_mean_abs_pa=correction_mean_abs,
+            pressure_correction_rel=correction_rel,
+            max_nodal_mass_imbalance_kg_per_s=max_mass_imbalance,
+            mass_flow_max_abs_kg_per_s=mass_flow_max,
+        )
 
     def _update_velocities(self, network_state, fluid_model, laminar: bool) -> None:
         for link_state in network_state.components:
@@ -224,7 +283,7 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
             return self.fitting_correlation
         raise TypeError(f"Unsupported state type: {type(link_state).__name__}")
 
-    def _apply_pressure_correction(self, network_state, correction) -> tuple[float, float]:
+    def _apply_pressure_correction(self, network_state, correction) -> tuple[float, float, float]:
         scaled_correction = []
         relative_corrections = []
         for idx, node_id in enumerate(sorted(network_state.nodes)):
@@ -235,7 +294,9 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
             scaled_correction.append(delta_p)
             denominator = max(abs(new_pressure), 1.0)
             relative_corrections.append(abs(delta_p) / denominator)
-        return max_abs_value(scaled_correction), max(relative_corrections)
+        abs_corrections = [abs(value) for value in scaled_correction]
+        mean_abs_correction = sum(abs_corrections) / len(abs_corrections)
+        return max_abs_value(scaled_correction), mean_abs_correction, max(relative_corrections)
 
     def _compute_max_nodal_mass_imbalance(self, network_state) -> float:
         imbalance_by_node = {node_id: 0.0 for node_id in network_state.nodes}

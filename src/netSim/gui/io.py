@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from netSim.core.case import FlowBoundary, NetworkCase, PressureBoundary
+from netSim.core.components import Fitting, Pipe
+from netSim.core.settings import SolverSettings
+from netSim.properties.single_component import SingleComponentFluid
+from netSim.solvers import SteadyIsothermalIncompressibleSolver
+
 from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene
 
 
@@ -49,9 +55,158 @@ def scene_from_dict(data: dict) -> CanvasScene:
         + 1
     )
     scene.active_tool = None
+    scene.solver_settings = dict(data.get("solver_settings", {}))
+    scene.initial_node_pressures_pa = {
+        int(node_id): float(value)
+        for node_id, value in data.get("initial_node_pressures_pa", {}).items()
+    }
     return scene
 
 
 def load_scene_from_file(path: str | Path) -> CanvasScene:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return scene_from_dict(data)
+
+
+def build_network_case_from_scene(scene: CanvasScene) -> NetworkCase:
+    if not scene.nodes:
+        raise ValueError("The scene is empty. Add nodes before running the simulation.")
+    if not scene.links:
+        raise ValueError("The scene has no links. Add at least one connection before running.")
+
+    pressure_inlets: list[PressureBoundary] = []
+    pressure_outlets: list[PressureBoundary] = []
+    flow_inlets: list[FlowBoundary] = []
+    flow_outlets: list[FlowBoundary] = []
+
+    for node in scene.nodes:
+        if node.node_type == "junction":
+            continue
+
+        condition_type = node.properties.get("condition_type", "pressure")
+        if condition_type == "pressure":
+            value_text = node.properties.get("pressure", "").strip()
+            if not value_text:
+                raise ValueError(
+                    f"{node.node_type.capitalize()} #{node.node_id} is missing a pressure value."
+                )
+            boundary = PressureBoundary(node_id=node.node_id, pressure_pa=float(value_text))
+            if node.node_type == "source":
+                pressure_inlets.append(boundary)
+            else:
+                pressure_outlets.append(boundary)
+        elif condition_type == "flow":
+            value_text = node.properties.get("flow", "").strip()
+            if not value_text:
+                raise ValueError(
+                    f"{node.node_type.capitalize()} #{node.node_id} is missing a flow value."
+                )
+            boundary = FlowBoundary(node_id=node.node_id, mass_flow_kg_per_s=float(value_text))
+            if node.node_type == "source":
+                flow_inlets.append(boundary)
+            else:
+                flow_outlets.append(boundary)
+        else:
+            raise ValueError(
+                f"{node.node_type.capitalize()} #{node.node_id} has unsupported boundary type '{condition_type}'."
+            )
+
+    components = []
+    next_internal_node_id = max(node.node_id for node in scene.nodes) + 1
+    for link in scene.links:
+        if not link.components:
+            raise ValueError(
+                f"Connection #{link.link_id} must contain at least one component to run."
+            )
+
+        current_start = link.start_node_id
+        for component_index, component in enumerate(link.components):
+            is_last_component = component_index == len(link.components) - 1
+            current_end = link.end_node_id if is_last_component else next_internal_node_id
+            if not is_last_component:
+                next_internal_node_id += 1
+
+            if component.component_type == "pipe":
+                diameter = _required_float(component, "diameter_m", link.link_id)
+                length = _required_float(component, "length_m", link.link_id)
+                roughness = _optional_float(component, "roughness_m", default=0.000045)
+                height_change = _optional_float(component, "height_change_m", default=0.0)
+                components.append(
+                    Pipe(
+                        start_node=current_start,
+                        end_node=current_end,
+                        diameter_m=diameter,
+                        length_m=length,
+                        absolute_roughness_m=roughness,
+                        height_change_m=height_change,
+                        component_id=f"link_{link.link_id}_pipe_{component.component_id}",
+                    )
+                )
+            elif component.component_type == "fitting":
+                diameter = _required_float(component, "diameter_m", link.link_id)
+                loss_coefficient = _required_float(component, "loss_coefficient", link.link_id)
+                components.append(
+                    Fitting(
+                        start_node=current_start,
+                        end_node=current_end,
+                        diameter_m=diameter,
+                        loss_coefficient=loss_coefficient,
+                        component_id=f"link_{link.link_id}_fitting_{component.component_id}",
+                    )
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported component type '{component.component_type}' in connection #{link.link_id}."
+                )
+
+            current_start = current_end
+
+    visible_node_ids = {node.node_id for node in scene.nodes}
+    all_node_ids = visible_node_ids.union(range(max(visible_node_ids) + 1, next_internal_node_id))
+
+    return NetworkCase(
+        name="GUI scene",
+        fluid_model=SingleComponentFluid(
+            density_kg_per_m3=998.25,
+            viscosity_pa_s=0.001,
+        ),
+        pressure_inlets=tuple(pressure_inlets),
+        pressure_outlets=tuple(pressure_outlets),
+        flow_inlets=tuple(flow_inlets),
+        flow_outlets=tuple(flow_outlets),
+        components=tuple(components),
+        node_ids=tuple(sorted(all_node_ids)),
+        initial_node_pressures_pa=dict(scene.initial_node_pressures_pa),
+    )
+
+
+def build_solver_from_scene(scene: CanvasScene) -> SteadyIsothermalIncompressibleSolver:
+    if scene.solver_settings:
+        return SteadyIsothermalIncompressibleSolver(
+            SolverSettings(**scene.solver_settings)
+        )
+    return SteadyIsothermalIncompressibleSolver(SolverSettings())
+
+
+def _required_float(
+    component: CanvasLinkComponent,
+    field_name: str,
+    link_id: int,
+) -> float:
+    value_text = component.properties.get(field_name, "").strip()
+    if not value_text:
+        raise ValueError(
+            f"{component.component_type.capitalize()} in connection #{link_id} is missing '{field_name}'."
+        )
+    return float(value_text)
+
+
+def _optional_float(
+    component: CanvasLinkComponent,
+    field_name: str,
+    default: float,
+) -> float:
+    value_text = component.properties.get(field_name, "").strip()
+    if not value_text:
+        return default
+    return float(value_text)

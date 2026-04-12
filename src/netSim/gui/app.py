@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .io import load_scene_from_file
+from .io import build_network_case_from_scene, build_solver_from_scene, load_scene_from_file
 from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene
 
 
@@ -45,16 +46,35 @@ class ToolTip:
 
 
 class NetSimGui:
+    METRIC_OPTIONS = (
+        ("Max abs pressure correction (Pa)", "pressure_correction_abs_pa"),
+        ("Mean abs pressure correction (Pa)", "pressure_correction_mean_abs_pa"),
+        ("Max rel pressure correction", "pressure_correction_rel"),
+        ("Max nodal mass imbalance (kg/s)", "max_nodal_mass_imbalance_kg_per_s"),
+        ("Max abs flow (kg/s)", "mass_flow_max_abs_kg_per_s"),
+    )
+
     def __init__(self) -> None:
         self.scene = CanvasScene()
         self.drag_source_node_id: int | None = None
         self.drag_line_id: int | None = None
         self.moving_node_id: int | None = None
+        self.latest_result = None
+        self.latest_boundary_results: dict[int, dict[str, float]] = {}
+        self.convergence_window: tk.Toplevel | None = None
+        self.convergence_canvas: tk.Canvas | None = None
         self.root = tk.Tk()
         self.root.title("netSim GUI Prototype")
         self.root.geometry("1100x700")
         self.root.minsize(900, 600)
 
+        self.metric_label_to_name = {label: name for label, name in self.METRIC_OPTIONS}
+        self.metric_name_to_label = {name: label for label, name in self.METRIC_OPTIONS}
+        self.convergence_metric_var = tk.StringVar(
+            master=self.root,
+            value=self.metric_name_to_label["pressure_correction_abs_pa"],
+        )
+        self.convergence_history = {"laminar": [], "turbulent": []}
         self.status_var = tk.StringVar(value="Select a node type from the palette.")
         self.tool_var = tk.StringVar(value="No tool selected")
 
@@ -80,6 +100,13 @@ class NetSimGui:
 
         palette_title = ttk.Label(palette, text="Node Palette")
         palette_title.pack(anchor="w", pady=(0, 8))
+
+        ttk.Button(
+            palette,
+            text="Run",
+            command=self._run_simulation,
+            width=12,
+        ).pack(anchor="w", pady=(0, 10))
 
         source_button = ttk.Button(
             palette,
@@ -160,6 +187,8 @@ class NetSimGui:
         self.drag_source_node_id = None
         self.drag_line_id = None
         self.moving_node_id = None
+        self.latest_result = None
+        self.latest_boundary_results = {}
         self.tool_var.set("No tool selected")
         self.status_var.set("New scene created. Select a node type from the palette.")
 
@@ -185,9 +214,35 @@ class NetSimGui:
         self.drag_source_node_id = None
         self.drag_line_id = None
         self.moving_node_id = None
+        self.latest_result = None
+        self.latest_boundary_results = {}
         self.tool_var.set("No tool selected")
         self._redraw_scene()
         self.status_var.set(f"Opened GUI case: {file_path}")
+
+    def _run_simulation(self) -> None:
+        try:
+            case = self._build_network_case_from_scene()
+        except ValueError as exc:
+            messagebox.showerror("Run failed", str(exc))
+            return
+
+        solver = build_solver_from_scene(self.scene)
+        self._prepare_convergence_window()
+        result = solver.solve(case, progress_callback=self._on_solver_progress)
+        self.latest_result = result
+        self.latest_boundary_results = self._build_boundary_results(case, result)
+        self.convergence_history = {
+            "laminar": list(result.laminar_metrics),
+            "turbulent": list(result.turbulent_metrics),
+        }
+        self._redraw_scene()
+        self._redraw_convergence_plot()
+
+        if result.converged:
+            self.status_var.set(f"Simulation converged for case '{case.name}'.")
+        else:
+            self.status_var.set(f"Simulation did not converge for case '{case.name}'.")
 
     def _on_canvas_press(self, event: tk.Event) -> None:
         node_id = self._node_id_at(event.x, event.y)
@@ -381,6 +436,18 @@ class NetSimGui:
             font=("TkDefaultFont", 8),
             tags=(node_tag, "node"),
         )
+
+        summary = self._node_summary_text(node)
+        if summary:
+            self.canvas.create_text(
+                node.x,
+                node.y + 40,
+                text=summary,
+                font=("TkDefaultFont", 8),
+                fill="#3d3a35",
+                justify="center",
+                tags=(node_tag, "node"),
+            )
 
     def _draw_link(self, link: CanvasLink) -> None:
         start = self.scene.get_node(link.start_node_id)
@@ -696,6 +763,7 @@ class NetSimGui:
     ) -> None:
         properties = {key: value.get().strip() for key, value in entries.items()}
         updated_node = self.scene.update_node_properties(node_id, properties)
+        self._redraw_scene()
         self.status_var.set(
             f"Updated properties for {updated_node.node_type} #{updated_node.node_id}."
         )
@@ -726,6 +794,224 @@ class NetSimGui:
     @staticmethod
     def _pretty_field_name(field_name: str) -> str:
         return field_name.replace("_", " ").replace(" m", " (m)").capitalize()
+
+    def _node_summary_text(self, node: CanvasNode) -> str:
+        lines: list[str] = []
+        if node.node_type in {"source", "sink"}:
+            condition_type = node.properties.get("condition_type", "pressure")
+            if condition_type == "pressure":
+                pressure = node.properties.get("pressure", "").strip()
+                if pressure:
+                    lines.append(f"P={pressure}")
+            else:
+                flow = node.properties.get("flow", "").strip()
+                if flow:
+                    lines.append(f"Q={flow}")
+
+            result_data = self.latest_boundary_results.get(node.node_id)
+            if result_data is not None:
+                if condition_type == "pressure" and "flow_kg_per_s" in result_data:
+                    lines.append(f"Q={result_data['flow_kg_per_s']:.3f} kg/s")
+                elif condition_type == "flow" and "pressure_pa" in result_data:
+                    lines.append(f"P={result_data['pressure_pa']:.1f} Pa")
+            return "\n".join(lines)
+
+        label = node.properties.get("label", "").strip()
+        return label
+
+    def _build_network_case_from_scene(self) -> NetworkCase:
+        return build_network_case_from_scene(self.scene)
+
+    def _build_boundary_results(self, case: NetworkCase, result) -> dict[int, dict[str, float]]:
+        boundary_results: dict[int, dict[str, float]] = {}
+        for node_id, pressure in result.node_pressures_pa.items():
+            boundary_results[node_id] = {"pressure_pa": pressure}
+
+        for component, component_result in zip(case.components, result.component_flows):
+            start_entry = boundary_results.setdefault(component.start_node, {"pressure_pa": result.node_pressures_pa.get(component.start_node, 0.0)})
+            end_entry = boundary_results.setdefault(component.end_node, {"pressure_pa": result.node_pressures_pa.get(component.end_node, 0.0)})
+            start_entry["flow_kg_per_s"] = start_entry.get("flow_kg_per_s", 0.0) - component_result.mass_flow_kg_per_s
+            end_entry["flow_kg_per_s"] = end_entry.get("flow_kg_per_s", 0.0) + component_result.mass_flow_kg_per_s
+
+        return boundary_results
+
+    def _prepare_convergence_window(self) -> None:
+        self.convergence_history = {"laminar": [], "turbulent": []}
+
+        if self.convergence_window is None or not self.convergence_window.winfo_exists():
+            self.convergence_window = tk.Toplevel(self.root)
+            self.convergence_window.title("Convergence Metrics")
+            self.convergence_window.transient(self.root)
+            self.convergence_window.geometry("820x460")
+
+            frame = ttk.Frame(self.convergence_window, padding=12)
+            frame.pack(fill="both", expand=True)
+
+            control_row = ttk.Frame(frame)
+            control_row.pack(fill="x", pady=(0, 8))
+            ttk.Label(control_row, text="Metric").pack(side="left", padx=(0, 8))
+            metric_box = ttk.Combobox(
+                control_row,
+                textvariable=self.convergence_metric_var,
+                state="readonly",
+                values=tuple(label for label, _name in self.METRIC_OPTIONS),
+                width=32,
+            )
+            metric_box.pack(side="left")
+            metric_box.bind("<<ComboboxSelected>>", lambda _event: self._redraw_convergence_plot())
+
+            self.convergence_canvas = tk.Canvas(
+                frame,
+                background="white",
+                highlightthickness=1,
+                highlightbackground="#b8b2a7",
+                width=760,
+                height=340,
+            )
+            self.convergence_canvas.pack(fill="both", expand=True)
+            self.convergence_canvas.bind(
+                "<Configure>",
+                lambda _event: self._redraw_convergence_plot(),
+            )
+
+            legend = ttk.Frame(frame)
+            legend.pack(fill="x", pady=(8, 0))
+            for label, color in (("Laminar", "#1d3557"), ("Turbulent", "#c1121f")):
+                swatch = tk.Canvas(legend, width=16, height=10, highlightthickness=0)
+                swatch.create_line(1, 5, 15, 5, fill=color, width=3)
+                swatch.pack(side="left", padx=(0, 4))
+                ttk.Label(legend, text=label).pack(side="left", padx=(0, 12))
+        else:
+            self.convergence_window.deiconify()
+            self.convergence_window.lift()
+
+        self.convergence_window.update_idletasks()
+        if self.convergence_canvas is not None:
+            self.convergence_canvas.after_idle(self._redraw_convergence_plot)
+
+    def _on_solver_progress(self, stage: str, _iteration_index: int, metrics) -> None:
+        self.convergence_history[stage].append(metrics)
+        if self.convergence_window is not None and self.convergence_window.winfo_exists():
+            self.convergence_window.update_idletasks()
+        self._redraw_convergence_plot()
+        self.root.update()
+
+    def _redraw_convergence_plot(self) -> None:
+        if self.convergence_canvas is None:
+            return
+
+        metric_name = self.metric_label_to_name[self.convergence_metric_var.get()]
+        history_series: list[tuple[str, list[float], str, int]] = []
+        laminar_values = [getattr(metric, metric_name) for metric in self.convergence_history["laminar"]]
+        turbulent_values = [getattr(metric, metric_name) for metric in self.convergence_history["turbulent"]]
+        if laminar_values:
+            history_series.append(("Laminar", laminar_values, "#1d3557", 0))
+        if turbulent_values:
+            history_series.append(
+                ("Turbulent", turbulent_values, "#c1121f", len(laminar_values))
+            )
+        if not history_series:
+            self.convergence_canvas.delete("all")
+            self.convergence_canvas.create_text(
+                20,
+                20,
+                anchor="nw",
+                text="No convergence data yet.",
+                fill="#555555",
+            )
+            return
+
+        self._draw_history_plot(self.convergence_canvas, history_series, metric_name)
+
+    def _draw_history_plot(
+        self,
+        canvas: tk.Canvas,
+        history_series: list[tuple[str, list[float], str, int]],
+        metric_name: str,
+    ) -> None:
+        canvas.delete("all")
+        width = int(canvas.winfo_width() or canvas["width"])
+        height = int(canvas.winfo_height() or canvas["height"])
+        if width < 160 or height < 120:
+            canvas.create_text(
+                20,
+                20,
+                anchor="nw",
+                text="Waiting for plot area...",
+                fill="#555555",
+            )
+            return
+
+        left = 70
+        right = width - 20
+        top = 20
+        bottom = height - 45
+        if right <= left or bottom <= top:
+            return
+
+        all_values = [
+            value
+            for _label, values, _color, _offset in history_series
+            for value in values
+            if value > 0.0
+        ]
+        if not all_values:
+            return
+
+        min_log = math.log10(min(all_values))
+        max_log = math.log10(max(all_values))
+        if math.isclose(min_log, max_log):
+            min_log -= 1.0
+            max_log += 1.0
+
+        max_index = max(
+            offset + len(values) - 1
+            for _label, values, _color, offset in history_series
+        )
+        x_den = max(max_index, 1)
+
+        canvas.create_line(left, top, left, bottom, fill="#333333", width=1.5)
+        canvas.create_line(left, bottom, right, bottom, fill="#333333", width=1.5)
+
+        for i in range(5):
+            frac = i / 4 if 4 else 0
+            y = top + (bottom - top) * frac
+            value_log = max_log - (max_log - min_log) * frac
+            value = 10**value_log
+            canvas.create_line(left, y, right, y, fill="#e6e6e6")
+            canvas.create_text(left - 8, y, text=f"{value:.1e}", anchor="e", font=("TkDefaultFont", 8))
+
+        for i in range(max_index + 1):
+            x = left + (right - left) * (i / x_den)
+            canvas.create_line(x, bottom, x, bottom + 4, fill="#333333")
+            canvas.create_text(x, bottom + 16, text=str(i + 1), anchor="n", font=("TkDefaultFont", 8))
+
+        canvas.create_text((left + right) / 2, height - 10, text="Iteration", anchor="s")
+        canvas.create_text(
+            16,
+            (top + bottom) / 2,
+            text=self._pretty_metric_name(metric_name),
+            angle=90,
+        )
+
+        for _label, values, color, offset in history_series:
+            points: list[float] = []
+            for idx, value in enumerate(values):
+                safe_value = value if value > 0.0 else min(all_values)
+                value_log = math.log10(safe_value)
+                x = left + (right - left) * ((offset + idx) / x_den)
+                y = top + (max_log - value_log) * (bottom - top) / (max_log - min_log)
+                points.extend((x, y))
+            if len(points) >= 4:
+                canvas.create_line(*points, fill=color, width=2, smooth=False)
+            elif len(points) == 2:
+                x, y = points
+                canvas.create_oval(x - 2, y - 2, x + 2, y + 2, fill=color, outline=color)
+
+    @staticmethod
+    def _pretty_metric_name(metric_name: str) -> str:
+        labels = {name: label for label, name in NetSimGui.METRIC_OPTIONS}
+        return labels.get(metric_name, metric_name)
 
     def run(self) -> None:
         self.root.mainloop()
