@@ -27,6 +27,7 @@ class GuiIoTests(unittest.TestCase):
 
         self.assertEqual(len(scene.nodes), 6)
         self.assertEqual(len(scene.links), 6)
+        self.assertEqual(scene.material["library_key"], "water_liquid")
         self.assertEqual(scene.get_node(1).properties["pressure"], "251300.0")
         self.assertEqual(scene.get_link(1).components[0].component_type, "pipe")
 
@@ -38,6 +39,29 @@ class GuiIoTests(unittest.TestCase):
         self.assertEqual(case.name, "GUI scene")
         self.assertEqual(len(case.components), 6)
         self.assertTrue(result.converged)
+
+    def test_build_network_case_uses_scene_material(self) -> None:
+        scene = load_scene_from_file(self._pipe_only_case_path())
+        scene.update_material(
+            {
+                "library_key": "water_liquid",
+                "name": "Water",
+                "density_kg_per_m3": "1000.0",
+                "viscosity_pa_s": "0.002",
+            }
+        )
+
+        case = build_network_case_from_scene(scene)
+
+        self.assertEqual(case.fluid_model.density_kg_per_m3, 1000.0)
+        self.assertEqual(case.fluid_model.viscosity_pa_s, 0.002)
+
+    def test_build_network_case_requires_material_definition(self) -> None:
+        scene = load_scene_from_file(self._pipe_only_case_path())
+        scene.material = {}
+
+        with self.assertRaises(ValueError):
+            build_network_case_from_scene(scene)
 
     def test_all_gui_tutorial_scenes_build_and_converge(self) -> None:
         tutorial_root = (

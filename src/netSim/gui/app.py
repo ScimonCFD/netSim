@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .io import build_network_case_from_scene, build_solver_from_scene, load_scene_from_file
-from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene
+from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene, DEFAULT_LIBRARY_MATERIAL
 
 
 class ToolTip:
@@ -46,6 +46,14 @@ class ToolTip:
 
 
 class NetSimGui:
+    MATERIAL_LIBRARY = {
+        "water_liquid": {
+            "definition_mode": "library",
+            "name": "Water",
+            "density_kg_per_m3": "998.25",
+            "viscosity_pa_s": "0.001",
+        }
+    }
     METRIC_OPTIONS = (
         ("Max abs pressure correction (Pa)", "pressure_correction_abs_pa"),
         ("Mean abs pressure correction (Pa)", "pressure_correction_mean_abs_pa"),
@@ -89,6 +97,11 @@ class NetSimGui:
         file_menu.add_separator()
         file_menu.add_command(label="Close", command=self.root.destroy)
         menu_bar.add_cascade(label="File", menu=file_menu)
+
+        material_menu = tk.Menu(menu_bar, tearoff=False)
+        material_menu.add_command(label="Define Material", command=self._open_material_dialog)
+        menu_bar.add_cascade(label="Material", menu=material_menu)
+
         self.root.config(menu=menu_bar)
 
     def _build_layout(self) -> None:
@@ -219,6 +232,150 @@ class NetSimGui:
         self.tool_var.set("No tool selected")
         self._redraw_scene()
         self.status_var.set(f"Opened GUI case: {file_path}")
+
+    def _open_material_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Define Material")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+
+        material = dict(self.scene.material)
+        definition_mode = material.get("definition_mode", "library" if material.get("library_key") else "custom")
+
+        library_var = tk.StringVar(
+            master=dialog,
+            value=material.get("library_key", DEFAULT_LIBRARY_MATERIAL["library_key"]),
+        )
+        mode_var = tk.StringVar(master=dialog, value=definition_mode)
+        name_var = tk.StringVar(master=dialog, value=material.get("name", ""))
+        density_var = tk.StringVar(
+            master=dialog,
+            value=material.get("density_kg_per_m3", ""),
+        )
+        viscosity_var = tk.StringVar(
+            master=dialog,
+            value=material.get("viscosity_pa_s", ""),
+        )
+
+        ttk.Label(frame, text="Definition").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        mode_row = ttk.Frame(frame)
+        mode_row.grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Radiobutton(mode_row, text="Library", variable=mode_var, value="library").pack(side="left")
+        ttk.Radiobutton(mode_row, text="Custom", variable=mode_var, value="custom").pack(side="left", padx=(8, 0))
+
+        ttk.Label(frame, text="Material Library").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        library_box = ttk.Combobox(
+            frame,
+            textvariable=library_var,
+            state="readonly",
+            values=("water_liquid",),
+            width=24,
+        )
+        library_box.grid(row=1, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Name").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        name_entry = ttk.Entry(frame, textvariable=name_var, width=26)
+        name_entry.grid(row=2, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Density (kg/m^3)").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+        density_entry = ttk.Entry(frame, textvariable=density_var, width=26)
+        density_entry.grid(row=3, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Viscosity (Pa·s)").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
+        viscosity_entry = ttk.Entry(frame, textvariable=viscosity_var, width=26)
+        viscosity_entry.grid(row=4, column=1, sticky="ew", pady=4)
+
+        frame.columnconfigure(1, weight=1)
+
+        def apply_library_selection(_event: tk.Event | None = None) -> None:
+            preset = self.MATERIAL_LIBRARY[library_var.get()]
+            name_var.set(preset["name"])
+            density_var.set(preset["density_kg_per_m3"])
+            viscosity_var.set(preset["viscosity_pa_s"])
+
+        def sync_mode_state(*_args: object) -> None:
+            is_library = mode_var.get() == "library"
+            library_box.configure(state="readonly" if is_library else "disabled")
+            editable_state = "disabled" if is_library else "normal"
+            name_entry.configure(state=editable_state)
+            density_entry.configure(state=editable_state)
+            viscosity_entry.configure(state=editable_state)
+            if is_library and library_var.get():
+                apply_library_selection()
+
+        library_box.bind("<<ComboboxSelected>>", apply_library_selection)
+        mode_var.trace_add("write", sync_mode_state)
+        sync_mode_state()
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(button_row, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Save",
+            command=lambda: self._save_material_definition(
+                dialog,
+                mode_var,
+                library_var,
+                name_var,
+                density_var,
+                viscosity_var,
+            ),
+        ).pack(side="right", padx=(0, 8))
+
+        dialog.update_idletasks()
+        dialog.wait_visibility()
+        dialog.grab_set()
+        dialog.focus_set()
+        name_entry.focus_set()
+
+    def _save_material_definition(
+        self,
+        dialog: tk.Toplevel,
+        mode_var: tk.StringVar,
+        library_var: tk.StringVar,
+        name_var: tk.StringVar,
+        density_var: tk.StringVar,
+        viscosity_var: tk.StringVar,
+    ) -> None:
+        try:
+            float(density_var.get().strip())
+            float(viscosity_var.get().strip())
+        except ValueError:
+            messagebox.showerror(
+                "Invalid material",
+                "Density and viscosity must be valid numbers.",
+                parent=dialog,
+            )
+            return
+
+        material = {
+            "definition_mode": mode_var.get().strip(),
+            "library_key": library_var.get().strip() if mode_var.get() == "library" else "",
+            "name": name_var.get().strip(),
+            "density_kg_per_m3": density_var.get().strip(),
+            "viscosity_pa_s": viscosity_var.get().strip(),
+        }
+        if mode_var.get() == "library" and not material["library_key"]:
+            messagebox.showerror(
+                "Invalid material",
+                "Select a material from the library.",
+                parent=dialog,
+            )
+            return
+        if not material["name"]:
+            messagebox.showerror(
+                "Invalid material",
+                "Material name cannot be empty.",
+                parent=dialog,
+            )
+            return
+        self.scene.update_material(material)
+        self.status_var.set(f"Material set to {material['name']}.")
+        dialog.destroy()
 
     def _run_simulation(self) -> None:
         try:

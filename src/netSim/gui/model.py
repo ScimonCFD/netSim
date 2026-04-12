@@ -7,6 +7,13 @@ from typing import List, Optional
 
 NODE_TYPES = ("source", "sink", "junction")
 LINK_COMPONENT_TYPES = ("pipe", "fitting")
+DEFAULT_LIBRARY_MATERIAL = {
+    "library_key": "water_liquid",
+    "definition_mode": "library",
+    "name": "Water",
+    "density_kg_per_m3": "998.25",
+    "viscosity_pa_s": "0.001",
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,7 @@ class CanvasScene:
     active_tool: Optional[str] = None
     nodes: List[CanvasNode] = field(default_factory=list)
     links: List[CanvasLink] = field(default_factory=list)
+    material: Dict[str, str] = field(default_factory=dict)
     solver_settings: Dict[str, float | int] = field(default_factory=dict)
     initial_node_pressures_pa: Dict[int, float] = field(default_factory=dict)
     _next_node_id: int = 1
@@ -184,12 +192,16 @@ class CanvasScene:
     def clear(self) -> None:
         self.nodes.clear()
         self.links.clear()
+        self.material = {}
         self.solver_settings.clear()
         self.initial_node_pressures_pa.clear()
         self._next_node_id = 1
         self._next_link_id = 1
         self._next_component_id = 1
         self.active_tool = None
+
+    def update_material(self, material: Dict[str, str]) -> None:
+        self.material = dict(material)
 
     @staticmethod
     def _default_properties(node_type: str) -> Dict[str, str]:

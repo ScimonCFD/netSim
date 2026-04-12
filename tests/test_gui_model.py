@@ -33,10 +33,24 @@ class GuiModelTests(unittest.TestCase):
         scene = CanvasScene()
         scene.set_active_tool("junction")
         scene.add_node(50, 60)
+        scene.update_material(
+            {
+                "library_key": "water_liquid",
+                "name": "Water",
+                "density_kg_per_m3": "1000.0",
+                "viscosity_pa_s": "0.002",
+            }
+        )
         scene.clear()
 
         self.assertEqual(scene.nodes, [])
         self.assertIsNone(scene.active_tool)
+        self.assertEqual(scene.material, {})
+
+    def test_scene_starts_with_default_material(self) -> None:
+        scene = CanvasScene()
+
+        self.assertEqual(scene.material, {})
 
     def test_add_link_connects_two_existing_nodes(self) -> None:
         scene = CanvasScene()

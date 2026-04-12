@@ -1,4 +1,11 @@
 {
+  "material": {
+    "definition_mode": "library",
+    "library_key": "water_liquid",
+    "name": "Water",
+    "density_kg_per_m3": "998.25",
+    "viscosity_pa_s": "0.001"
+  },
   "solver_settings": {
     "laminar_iterations": 20,
     "turbulent_iterations": 120,

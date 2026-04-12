@@ -55,6 +55,9 @@ def scene_from_dict(data: dict) -> CanvasScene:
         + 1
     )
     scene.active_tool = None
+    scene.material = {
+        key: str(value) for key, value in data.get("material", {}).items()
+    }
     scene.solver_settings = dict(data.get("solver_settings", {}))
     scene.initial_node_pressures_pa = {
         int(node_id): float(value)
@@ -73,6 +76,12 @@ def build_network_case_from_scene(scene: CanvasScene) -> NetworkCase:
         raise ValueError("The scene is empty. Add nodes before running the simulation.")
     if not scene.links:
         raise ValueError("The scene has no links. Add at least one connection before running.")
+    if not scene.material:
+        raise ValueError("No material is defined. Use Material -> Define Material before running.")
+    if not scene.material.get("density_kg_per_m3", "").strip():
+        raise ValueError("The material is missing density_kg_per_m3.")
+    if not scene.material.get("viscosity_pa_s", "").strip():
+        raise ValueError("The material is missing viscosity_pa_s.")
 
     pressure_inlets: list[PressureBoundary] = []
     pressure_outlets: list[PressureBoundary] = []
@@ -167,8 +176,8 @@ def build_network_case_from_scene(scene: CanvasScene) -> NetworkCase:
     return NetworkCase(
         name="GUI scene",
         fluid_model=SingleComponentFluid(
-            density_kg_per_m3=998.25,
-            viscosity_pa_s=0.001,
+            density_kg_per_m3=float(scene.material["density_kg_per_m3"]),
+            viscosity_pa_s=float(scene.material["viscosity_pa_s"]),
         ),
         pressure_inlets=tuple(pressure_inlets),
         pressure_outlets=tuple(pressure_outlets),
