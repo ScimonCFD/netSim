@@ -1,0 +1,1026 @@
+from __future__ import annotations
+
+import math
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+from .io import build_network_case_from_scene, build_solver_from_scene, load_scene_from_file
+from .model import CanvasLink, CanvasLinkComponent, CanvasNode, CanvasScene
+
+
+class ToolTip:
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.tip_window: tk.Toplevel | None = None
+
+        self.widget.bind("<Enter>", self._show)
+        self.widget.bind("<Leave>", self._hide)
+
+    def _show(self, _event: tk.Event) -> None:
+        if self.tip_window is not None:
+            return
+
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() + 8
+        y = self.widget.winfo_rooty() + 4
+
+        self.tip_window = tk.Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(
+            self.tip_window,
+            text=self.text,
+            background="#fff8dc",
+            relief="solid",
+            borderwidth=1,
+            padx=6,
+            pady=3,
+        )
+        label.pack()
+
+    def _hide(self, _event: tk.Event) -> None:
+        if self.tip_window is not None:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
+class NetSimGui:
+    METRIC_OPTIONS = (
+        ("Max abs pressure correction (Pa)", "pressure_correction_abs_pa"),
+        ("Mean abs pressure correction (Pa)", "pressure_correction_mean_abs_pa"),
+        ("Max rel pressure correction", "pressure_correction_rel"),
+        ("Max nodal mass imbalance (kg/s)", "max_nodal_mass_imbalance_kg_per_s"),
+        ("Max abs flow (kg/s)", "mass_flow_max_abs_kg_per_s"),
+    )
+
+    def __init__(self) -> None:
+        self.scene = CanvasScene()
+        self.drag_source_node_id: int | None = None
+        self.drag_line_id: int | None = None
+        self.moving_node_id: int | None = None
+        self.latest_result = None
+        self.latest_boundary_results: dict[int, dict[str, float]] = {}
+        self.convergence_window: tk.Toplevel | None = None
+        self.convergence_canvas: tk.Canvas | None = None
+        self.root = tk.Tk()
+        self.root.title("netSim GUI Prototype")
+        self.root.geometry("1100x700")
+        self.root.minsize(900, 600)
+
+        self.metric_label_to_name = {label: name for label, name in self.METRIC_OPTIONS}
+        self.metric_name_to_label = {name: label for label, name in self.METRIC_OPTIONS}
+        self.convergence_metric_var = tk.StringVar(
+            master=self.root,
+            value=self.metric_name_to_label["pressure_correction_abs_pa"],
+        )
+        self.convergence_history = {"laminar": [], "turbulent": []}
+        self.status_var = tk.StringVar(value="Select a node type from the palette.")
+        self.tool_var = tk.StringVar(value="No tool selected")
+
+        self._build_menu()
+        self._build_layout()
+
+    def _build_menu(self) -> None:
+        menu_bar = tk.Menu(self.root)
+        file_menu = tk.Menu(menu_bar, tearoff=False)
+        file_menu.add_command(label="New", command=self._new_scene)
+        file_menu.add_command(label="Open", command=self._open_scene)
+        file_menu.add_separator()
+        file_menu.add_command(label="Close", command=self.root.destroy)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+        self.root.config(menu=menu_bar)
+
+    def _build_layout(self) -> None:
+        container = ttk.Frame(self.root, padding=8)
+        container.pack(fill="both", expand=True)
+
+        palette = ttk.Frame(container, padding=(8, 8, 12, 8))
+        palette.pack(side="left", fill="y")
+
+        palette_title = ttk.Label(palette, text="Node Palette")
+        palette_title.pack(anchor="w", pady=(0, 8))
+
+        ttk.Button(
+            palette,
+            text="Run",
+            command=self._run_simulation,
+            width=12,
+        ).pack(anchor="w", pady=(0, 10))
+
+        source_button = ttk.Button(
+            palette,
+            text="▲",
+            command=lambda: self._select_tool("source"),
+            width=4,
+        )
+        source_button.pack(anchor="w", pady=4)
+        ToolTip(source_button, "Source")
+
+        sink_button = ttk.Button(
+            palette,
+            text="▼",
+            command=lambda: self._select_tool("sink"),
+            width=4,
+        )
+        sink_button.pack(anchor="w", pady=4)
+        ToolTip(sink_button, "Sink")
+
+        junction_button = ttk.Button(
+            palette,
+            text="○",
+            command=lambda: self._select_tool("junction"),
+            width=4,
+        )
+        junction_button.pack(anchor="w", pady=4)
+        ToolTip(junction_button, "Junction")
+
+        ttk.Separator(palette, orient="horizontal").pack(fill="x", pady=10)
+
+        ttk.Label(palette, text="Active Tool").pack(anchor="w")
+        ttk.Label(
+            palette,
+            textvariable=self.tool_var,
+            width=20,
+            relief="groove",
+            padding=6,
+        ).pack(anchor="w", pady=(4, 0))
+
+        canvas_frame = ttk.Frame(container)
+        canvas_frame.pack(side="left", fill="both", expand=True)
+
+        self.canvas = tk.Canvas(
+            canvas_frame,
+            background="#fbfaf4",
+            highlightthickness=1,
+            highlightbackground="#b8b2a7",
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.canvas.bind("<Shift-ButtonPress-1>", self._on_canvas_shift_press)
+        self.canvas.bind("<Shift-B1-Motion>", self._on_canvas_shift_drag)
+        self.canvas.bind("<Shift-ButtonRelease-1>", self._on_canvas_shift_release)
+        self.canvas.bind("<ButtonPress-3>", self._on_canvas_right_press)
+        self.canvas.bind("<B3-Motion>", self._on_canvas_right_drag)
+        self.canvas.bind("<ButtonRelease-3>", self._on_canvas_right_release)
+        self.canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
+
+        status = ttk.Label(
+            self.root,
+            textvariable=self.status_var,
+            relief="sunken",
+            anchor="w",
+            padding=(8, 4),
+        )
+        status.pack(fill="x", side="bottom")
+
+    def _select_tool(self, tool: str) -> None:
+        self.scene.set_active_tool(tool)
+        self.tool_var.set(tool.capitalize())
+        self.status_var.set(f"{tool.capitalize()} selected. Click on the canvas to place it.")
+
+    def _new_scene(self) -> None:
+        self.scene.clear()
+        self.canvas.delete("all")
+        self.drag_source_node_id = None
+        self.drag_line_id = None
+        self.moving_node_id = None
+        self.latest_result = None
+        self.latest_boundary_results = {}
+        self.tool_var.set("No tool selected")
+        self.status_var.set("New scene created. Select a node type from the palette.")
+
+    def _open_scene(self) -> None:
+        file_path = filedialog.askopenfilename(
+            title="Open netSim GUI case",
+            filetypes=(
+                ("netSim GUI case", "*.gui.json"),
+                ("JSON files", "*.json"),
+                ("All files", "*.*"),
+            ),
+        )
+        if not file_path:
+            return
+
+        try:
+            self.scene = load_scene_from_file(file_path)
+        except Exception as exc:  # pragma: no cover - UI feedback path
+            messagebox.showerror("Open failed", f"Could not open case:\n{exc}")
+            return
+
+        self.canvas.delete("all")
+        self.drag_source_node_id = None
+        self.drag_line_id = None
+        self.moving_node_id = None
+        self.latest_result = None
+        self.latest_boundary_results = {}
+        self.tool_var.set("No tool selected")
+        self._redraw_scene()
+        self.status_var.set(f"Opened GUI case: {file_path}")
+
+    def _run_simulation(self) -> None:
+        try:
+            case = self._build_network_case_from_scene()
+        except ValueError as exc:
+            messagebox.showerror("Run failed", str(exc))
+            return
+
+        solver = build_solver_from_scene(self.scene)
+        self._prepare_convergence_window()
+        result = solver.solve(case, progress_callback=self._on_solver_progress)
+        self.latest_result = result
+        self.latest_boundary_results = self._build_boundary_results(case, result)
+        self.convergence_history = {
+            "laminar": list(result.laminar_metrics),
+            "turbulent": list(result.turbulent_metrics),
+        }
+        self._redraw_scene()
+        self._redraw_convergence_plot()
+
+        if result.converged:
+            self.status_var.set(f"Simulation converged for case '{case.name}'.")
+        else:
+            self.status_var.set(f"Simulation did not converge for case '{case.name}'.")
+
+    def _on_canvas_press(self, event: tk.Event) -> None:
+        node_id = self._node_id_at(event.x, event.y)
+
+        if self.scene.active_tool is not None:
+            return
+
+        if node_id is None:
+            return
+
+        node = self.scene.get_node(node_id)
+        if node is None:
+            return
+
+        self.moving_node_id = node_id
+        self.status_var.set(
+            f"Moving {node.node_type} #{node.node_id}. Drag with left mouse button."
+        )
+
+    def _on_canvas_right_press(self, event: tk.Event) -> None:
+        if self.scene.active_tool is not None:
+            return
+
+        node_id = self._node_id_at(event.x, event.y)
+        if node_id is None:
+            return
+
+        node = self.scene.get_node(node_id)
+        if node is None:
+            return
+
+        self.drag_source_node_id = node_id
+        self.drag_line_id = self.canvas.create_line(
+            node.x,
+            node.y,
+            event.x,
+            event.y,
+            fill="#6c757d",
+            width=2,
+            dash=(5, 3),
+        )
+        self.status_var.set(
+            f"Connecting from {node.node_type} #{node.node_id}. Drag with right mouse button."
+        )
+
+    def _on_canvas_shift_press(self, event: tk.Event) -> None:
+        self._on_canvas_right_press(event)
+
+    def _on_canvas_drag(self, event: tk.Event) -> None:
+        if self.moving_node_id is None:
+            return
+
+        updated_node = self.scene.move_node(self.moving_node_id, event.x, event.y)
+        self._redraw_scene()
+        self.status_var.set(
+            f"Moving {updated_node.node_type} #{updated_node.node_id} to "
+            f"({int(updated_node.x)}, {int(updated_node.y)})."
+        )
+
+    def _on_canvas_right_drag(self, event: tk.Event) -> None:
+        if self.drag_line_id is None or self.drag_source_node_id is None:
+            return
+
+        source = self.scene.get_node(self.drag_source_node_id)
+        if source is None:
+            return
+
+        self.canvas.coords(self.drag_line_id, source.x, source.y, event.x, event.y)
+
+    def _on_canvas_shift_drag(self, event: tk.Event) -> None:
+        self._on_canvas_right_drag(event)
+
+    def _on_canvas_release(self, event: tk.Event) -> None:
+        if self.moving_node_id is not None:
+            moved_node = self.scene.get_node(self.moving_node_id)
+            self.moving_node_id = None
+            if moved_node is not None:
+                self.status_var.set(
+                    f"Moved {moved_node.node_type} #{moved_node.node_id} to "
+                    f"({int(moved_node.x)}, {int(moved_node.y)})."
+                )
+            return
+
+        if self.scene.active_tool is None:
+            self.status_var.set("Select Source, Sink, or Junction before placing a node.")
+            return
+
+        if self._node_id_at(event.x, event.y) is not None:
+            self.status_var.set("Release on empty canvas space to place a new node.")
+            return
+
+        node = self.scene.add_node(event.x, event.y)
+        self._draw_node(node)
+        placed_tool = node.node_type
+        self.scene.set_active_tool(None)
+        self.tool_var.set("No tool selected")
+        self.status_var.set(
+            f"Placed {placed_tool} #{node.node_id} at ({int(node.x)}, {int(node.y)}). "
+            "Select a node type to place another."
+        )
+
+    def _on_canvas_right_release(self, event: tk.Event) -> None:
+        if self.drag_source_node_id is not None:
+            self._finish_connection(event)
+
+    def _on_canvas_shift_release(self, event: tk.Event) -> None:
+        self._on_canvas_right_release(event)
+
+    def _on_canvas_double_click(self, event: tk.Event) -> None:
+        node_id = self._node_id_at(event.x, event.y)
+        if node_id is not None:
+            node = self.scene.get_node(node_id)
+            if node is None:
+                return
+
+            self._open_node_properties_dialog(node)
+            return
+
+        link_id = self._link_id_at(event.x, event.y)
+        if link_id is None:
+            return
+
+        link = self.scene.get_link(link_id)
+        if link is None:
+            return
+
+        self._open_link_properties_dialog(link)
+
+    def _finish_connection(self, event: tk.Event) -> None:
+        source_node_id = self.drag_source_node_id
+        target_node_id = self._node_id_at(event.x, event.y)
+        self._clear_drag_line()
+
+        if source_node_id is None:
+            return
+        if target_node_id is None:
+            self.status_var.set("Connection cancelled. Release over another node to connect.")
+            return
+        if target_node_id == source_node_id:
+            self.status_var.set("Connection cancelled. Choose a different target node.")
+            return
+
+        try:
+            link = self.scene.add_link(source_node_id, target_node_id)
+        except ValueError as exc:
+            self.status_var.set(str(exc))
+            return
+
+        self._draw_link(link)
+        source = self.scene.get_node(source_node_id)
+        target = self.scene.get_node(target_node_id)
+        if source is not None and target is not None:
+            self.status_var.set(
+                f"Connected {source.node_type} #{source.node_id} to "
+                f"{target.node_type} #{target.node_id}."
+            )
+
+    def _draw_node(self, node: CanvasNode) -> None:
+        radius = 24
+        x0 = node.x - radius
+        y0 = node.y - radius
+        x1 = node.x + radius
+        y1 = node.y + radius
+
+        fill_color = self._node_fill(node.node_type)
+        label = self._node_label(node)
+
+        node_tag = f"node_{node.node_id}"
+
+        self.canvas.create_oval(
+            x0,
+            y0,
+            x1,
+            y1,
+            fill=fill_color,
+            outline="#2e2a24",
+            width=2,
+            tags=(node_tag, "node"),
+        )
+        self.canvas.create_text(
+            node.x,
+            node.y - 2,
+            text=label,
+            font=("TkDefaultFont", 9, "bold"),
+            tags=(node_tag, "node"),
+        )
+        self.canvas.create_text(
+            node.x,
+            node.y + 12,
+            text=str(node.node_id),
+            font=("TkDefaultFont", 8),
+            tags=(node_tag, "node"),
+        )
+
+        summary = self._node_summary_text(node)
+        if summary:
+            self.canvas.create_text(
+                node.x,
+                node.y + 40,
+                text=summary,
+                font=("TkDefaultFont", 8),
+                fill="#3d3a35",
+                justify="center",
+                tags=(node_tag, "node"),
+            )
+
+    def _draw_link(self, link: CanvasLink) -> None:
+        start = self.scene.get_node(link.start_node_id)
+        end = self.scene.get_node(link.end_node_id)
+        if start is None or end is None:
+            return
+
+        self.canvas.create_line(
+            start.x,
+            start.y,
+            end.x,
+            end.y,
+            fill="#4f5d75",
+            width=3,
+            tags=("link", f"link_{link.link_id}"),
+        )
+        self.canvas.tag_lower("link")
+
+    def _redraw_scene(self) -> None:
+        self.canvas.delete("all")
+        for link in self.scene.links:
+            self._draw_link(link)
+        for node in self.scene.nodes:
+            self._draw_node(node)
+
+    def _node_id_at(self, x: float, y: float) -> int | None:
+        overlapping = self.canvas.find_overlapping(x - 1, y - 1, x + 1, y + 1)
+        for item_id in reversed(overlapping):
+            for tag in self.canvas.gettags(item_id):
+                if tag.startswith("node_"):
+                    return int(tag.split("_", 1)[1])
+        return None
+
+    def _link_id_at(self, x: float, y: float) -> int | None:
+        overlapping = self.canvas.find_overlapping(x - 3, y - 3, x + 3, y + 3)
+        for item_id in reversed(overlapping):
+            for tag in self.canvas.gettags(item_id):
+                if tag.startswith("link_"):
+                    return int(tag.split("_", 1)[1])
+        return None
+
+    def _clear_drag_line(self) -> None:
+        if self.drag_line_id is not None:
+            self.canvas.delete(self.drag_line_id)
+        self.drag_line_id = None
+        self.drag_source_node_id = None
+
+    def _open_node_properties_dialog(self, node: CanvasNode) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{node.node_type.capitalize()} #{node.node_id}")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        container = ttk.Frame(dialog, padding=12)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(1, weight=1)
+
+        entries: dict[str, tk.StringVar] = {}
+
+        if node.node_type in {"source", "sink"}:
+            ttk.Label(container, text="Boundary Type").grid(row=0, column=0, sticky="w", pady=4)
+            condition_var = tk.StringVar(value=node.properties.get("condition_type", "pressure"))
+            entries["condition_type"] = condition_var
+
+            condition_frame = ttk.Frame(container)
+            condition_frame.grid(row=0, column=1, sticky="w", pady=4)
+
+            ttk.Radiobutton(
+                condition_frame,
+                text="Pressure",
+                value="pressure",
+                variable=condition_var,
+            ).pack(side="left", padx=(0, 8))
+            ttk.Radiobutton(
+                condition_frame,
+                text="Flow",
+                value="flow",
+                variable=condition_var,
+            ).pack(side="left")
+
+            ttk.Label(container, text="Pressure").grid(row=1, column=0, sticky="w", pady=4)
+            pressure_var = tk.StringVar(value=node.properties.get("pressure", ""))
+            pressure_entry = ttk.Entry(container, textvariable=pressure_var, width=20)
+            pressure_entry.grid(row=1, column=1, sticky="ew", pady=4)
+            entries["pressure"] = pressure_var
+
+            ttk.Label(container, text="Flow").grid(row=2, column=0, sticky="w", pady=4)
+            flow_var = tk.StringVar(value=node.properties.get("flow", ""))
+            flow_entry = ttk.Entry(container, textvariable=flow_var, width=20)
+            flow_entry.grid(row=2, column=1, sticky="ew", pady=4)
+            entries["flow"] = flow_var
+
+            self._sync_boundary_entries(
+                condition_var,
+                pressure_entry,
+                flow_entry,
+            )
+            condition_var.trace_add(
+                "write",
+                lambda *_args: self._sync_boundary_entries(
+                    condition_var,
+                    pressure_entry,
+                    flow_entry,
+                ),
+            )
+        else:
+            ttk.Label(container, text="Label").grid(row=0, column=0, sticky="w", pady=4)
+            label_var = tk.StringVar(value=node.properties.get("label", ""))
+            ttk.Entry(container, textvariable=label_var, width=20).grid(
+                row=0, column=1, sticky="ew", pady=4
+            )
+            entries["label"] = label_var
+
+        button_row = ttk.Frame(container)
+        button_row.grid(row=10, column=0, columnspan=2, sticky="e", pady=(10, 0))
+
+        ttk.Button(button_row, text="Cancel", command=dialog.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(
+            button_row,
+            text="Save",
+            command=lambda: self._save_node_properties(node.node_id, entries, dialog),
+        ).pack(side="right")
+
+        dialog.update_idletasks()
+        dialog.grab_set()
+        dialog.focus_set()
+
+    def _open_link_properties_dialog(self, link: CanvasLink) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Connection #{link.link_id}")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        container = ttk.Frame(dialog, padding=12)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(1, weight=1)
+        container.columnconfigure(2, weight=1)
+
+        ttk.Label(container, text="Component Palette").grid(
+            row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 8)
+        )
+        ttk.Label(container, text="Added Components").grid(
+            row=0, column=1, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(container, text="Component Properties").grid(
+            row=0, column=2, sticky="w", padx=(12, 0), pady=(0, 8)
+        )
+
+        palette = ttk.Frame(container)
+        palette.grid(row=1, column=0, sticky="ns")
+
+        components_list = tk.Listbox(container, width=28, height=8)
+        components_list.grid(row=1, column=1, sticky="nsew")
+        properties_frame = ttk.LabelFrame(container, text="Selected Component", padding=10)
+        properties_frame.grid(row=1, column=2, sticky="nsew", padx=(12, 0))
+
+        for component in link.components:
+            components_list.insert("end", self._component_list_label(component))
+
+        ttk.Button(
+            palette,
+            text="Pipe",
+            command=lambda: self._add_component_to_link(
+                link.link_id,
+                "pipe",
+                components_list,
+                properties_frame,
+            ),
+            width=12,
+        ).pack(anchor="w", pady=4)
+        ttk.Button(
+            palette,
+            text="Fitting",
+            command=lambda: self._add_component_to_link(
+                link.link_id,
+                "fitting",
+                components_list,
+                properties_frame,
+            ),
+            width=12,
+        ).pack(anchor="w", pady=4)
+
+        components_list.bind(
+            "<<ListboxSelect>>",
+            lambda _event: self._render_link_component_properties(
+                link.link_id,
+                components_list,
+                properties_frame,
+            ),
+        )
+
+        button_row = ttk.Frame(container)
+        button_row.grid(row=2, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(button_row, text="Close", command=dialog.destroy).pack(side="right")
+
+        dialog.update_idletasks()
+        dialog.grab_set()
+        dialog.focus_set()
+
+    def _add_component_to_link(
+        self,
+        link_id: int,
+        component_type: str,
+        components_list: tk.Listbox,
+        properties_frame: ttk.LabelFrame,
+    ) -> None:
+        updated_link = self.scene.add_link_component(link_id, component_type)
+        components_list.delete(0, "end")
+        for component in updated_link.components:
+            components_list.insert("end", self._component_list_label(component))
+        components_list.selection_clear(0, "end")
+        components_list.selection_set("end")
+        self._render_link_component_properties(link_id, components_list, properties_frame)
+        self.status_var.set(
+            f"Added {component_type} to connection #{updated_link.link_id}."
+        )
+
+    def _render_link_component_properties(
+        self,
+        link_id: int,
+        components_list: tk.Listbox,
+        properties_frame: ttk.LabelFrame,
+    ) -> None:
+        for child in properties_frame.winfo_children():
+            child.destroy()
+
+        selected = components_list.curselection()
+        if not selected:
+            ttk.Label(properties_frame, text="Select a component to edit its data.").pack(
+                anchor="w"
+            )
+            return
+
+        link = self.scene.get_link(link_id)
+        if link is None:
+            return
+
+        component = link.components[selected[0]]
+        entries: dict[str, tk.StringVar] = {}
+
+        ttk.Label(
+            properties_frame,
+            text=f"{component.component_type.capitalize()} #{component.component_id}",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        row = 1
+        for key, value in component.properties.items():
+            ttk.Label(properties_frame, text=self._pretty_field_name(key)).grid(
+                row=row, column=0, sticky="w", pady=4
+            )
+            var = tk.StringVar(value=value)
+            ttk.Entry(properties_frame, textvariable=var, width=18).grid(
+                row=row, column=1, sticky="ew", pady=4
+            )
+            entries[key] = var
+            row += 1
+
+        button_row = ttk.Frame(properties_frame)
+        button_row.grid(row=row, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(
+            button_row,
+            text="Save",
+            command=lambda: self._save_link_component_properties(
+                link_id,
+                component.component_id,
+                entries,
+                components_list,
+                properties_frame,
+            ),
+        ).pack(side="right")
+
+    def _save_link_component_properties(
+        self,
+        link_id: int,
+        component_id: int,
+        entries: dict[str, tk.StringVar],
+        components_list: tk.Listbox,
+        properties_frame: ttk.LabelFrame,
+    ) -> None:
+        properties = {key: value.get().strip() for key, value in entries.items()}
+        updated_link = self.scene.update_link_component_properties(
+            link_id,
+            component_id,
+            properties,
+        )
+        selection = components_list.curselection()
+        components_list.delete(0, "end")
+        for component in updated_link.components:
+            components_list.insert("end", self._component_list_label(component))
+        if selection:
+            components_list.selection_set(selection[0])
+        self._render_link_component_properties(link_id, components_list, properties_frame)
+        self.status_var.set(f"Updated component #{component_id} in connection #{link_id}.")
+
+    @staticmethod
+    def _sync_boundary_entries(
+        condition_var: tk.StringVar,
+        pressure_entry: ttk.Entry,
+        flow_entry: ttk.Entry,
+    ) -> None:
+        if condition_var.get() == "pressure":
+            pressure_entry.state(["!disabled"])
+            flow_entry.state(["disabled"])
+        else:
+            pressure_entry.state(["disabled"])
+            flow_entry.state(["!disabled"])
+
+    def _save_node_properties(
+        self,
+        node_id: int,
+        entries: dict[str, tk.StringVar],
+        dialog: tk.Toplevel,
+    ) -> None:
+        properties = {key: value.get().strip() for key, value in entries.items()}
+        updated_node = self.scene.update_node_properties(node_id, properties)
+        self._redraw_scene()
+        self.status_var.set(
+            f"Updated properties for {updated_node.node_type} #{updated_node.node_id}."
+        )
+        dialog.destroy()
+
+    @staticmethod
+    def _node_fill(node_type: str) -> str:
+        colors = {
+            "source": "#8ecae6",
+            "sink": "#f28482",
+            "junction": "#d9d9d9",
+        }
+        return colors[node_type]
+
+    @staticmethod
+    def _node_label(node: CanvasNode) -> str:
+        labels = {
+            "source": "S",
+            "sink": "K",
+            "junction": "J",
+        }
+        return labels[node.node_type]
+
+    @staticmethod
+    def _component_list_label(component: CanvasLinkComponent) -> str:
+        return f"{component.component_type.capitalize()} #{component.component_id}"
+
+    @staticmethod
+    def _pretty_field_name(field_name: str) -> str:
+        return field_name.replace("_", " ").replace(" m", " (m)").capitalize()
+
+    def _node_summary_text(self, node: CanvasNode) -> str:
+        lines: list[str] = []
+        if node.node_type in {"source", "sink"}:
+            condition_type = node.properties.get("condition_type", "pressure")
+            if condition_type == "pressure":
+                pressure = node.properties.get("pressure", "").strip()
+                if pressure:
+                    lines.append(f"P={pressure}")
+            else:
+                flow = node.properties.get("flow", "").strip()
+                if flow:
+                    lines.append(f"Q={flow}")
+
+            result_data = self.latest_boundary_results.get(node.node_id)
+            if result_data is not None:
+                if condition_type == "pressure" and "flow_kg_per_s" in result_data:
+                    lines.append(f"Q={result_data['flow_kg_per_s']:.3f} kg/s")
+                elif condition_type == "flow" and "pressure_pa" in result_data:
+                    lines.append(f"P={result_data['pressure_pa']:.1f} Pa")
+            return "\n".join(lines)
+
+        label = node.properties.get("label", "").strip()
+        return label
+
+    def _build_network_case_from_scene(self) -> NetworkCase:
+        return build_network_case_from_scene(self.scene)
+
+    def _build_boundary_results(self, case: NetworkCase, result) -> dict[int, dict[str, float]]:
+        boundary_results: dict[int, dict[str, float]] = {}
+        for node_id, pressure in result.node_pressures_pa.items():
+            boundary_results[node_id] = {"pressure_pa": pressure}
+
+        for component, component_result in zip(case.components, result.component_flows):
+            start_entry = boundary_results.setdefault(component.start_node, {"pressure_pa": result.node_pressures_pa.get(component.start_node, 0.0)})
+            end_entry = boundary_results.setdefault(component.end_node, {"pressure_pa": result.node_pressures_pa.get(component.end_node, 0.0)})
+            start_entry["flow_kg_per_s"] = start_entry.get("flow_kg_per_s", 0.0) - component_result.mass_flow_kg_per_s
+            end_entry["flow_kg_per_s"] = end_entry.get("flow_kg_per_s", 0.0) + component_result.mass_flow_kg_per_s
+
+        return boundary_results
+
+    def _prepare_convergence_window(self) -> None:
+        self.convergence_history = {"laminar": [], "turbulent": []}
+
+        if self.convergence_window is None or not self.convergence_window.winfo_exists():
+            self.convergence_window = tk.Toplevel(self.root)
+            self.convergence_window.title("Convergence Metrics")
+            self.convergence_window.transient(self.root)
+            self.convergence_window.geometry("820x460")
+
+            frame = ttk.Frame(self.convergence_window, padding=12)
+            frame.pack(fill="both", expand=True)
+
+            control_row = ttk.Frame(frame)
+            control_row.pack(fill="x", pady=(0, 8))
+            ttk.Label(control_row, text="Metric").pack(side="left", padx=(0, 8))
+            metric_box = ttk.Combobox(
+                control_row,
+                textvariable=self.convergence_metric_var,
+                state="readonly",
+                values=tuple(label for label, _name in self.METRIC_OPTIONS),
+                width=32,
+            )
+            metric_box.pack(side="left")
+            metric_box.bind("<<ComboboxSelected>>", lambda _event: self._redraw_convergence_plot())
+
+            self.convergence_canvas = tk.Canvas(
+                frame,
+                background="white",
+                highlightthickness=1,
+                highlightbackground="#b8b2a7",
+                width=760,
+                height=340,
+            )
+            self.convergence_canvas.pack(fill="both", expand=True)
+            self.convergence_canvas.bind(
+                "<Configure>",
+                lambda _event: self._redraw_convergence_plot(),
+            )
+
+            legend = ttk.Frame(frame)
+            legend.pack(fill="x", pady=(8, 0))
+            for label, color in (("Laminar", "#1d3557"), ("Turbulent", "#c1121f")):
+                swatch = tk.Canvas(legend, width=16, height=10, highlightthickness=0)
+                swatch.create_line(1, 5, 15, 5, fill=color, width=3)
+                swatch.pack(side="left", padx=(0, 4))
+                ttk.Label(legend, text=label).pack(side="left", padx=(0, 12))
+        else:
+            self.convergence_window.deiconify()
+            self.convergence_window.lift()
+
+        self.convergence_window.update_idletasks()
+        if self.convergence_canvas is not None:
+            self.convergence_canvas.after_idle(self._redraw_convergence_plot)
+
+    def _on_solver_progress(self, stage: str, _iteration_index: int, metrics) -> None:
+        self.convergence_history[stage].append(metrics)
+        if self.convergence_window is not None and self.convergence_window.winfo_exists():
+            self.convergence_window.update_idletasks()
+        self._redraw_convergence_plot()
+        self.root.update()
+
+    def _redraw_convergence_plot(self) -> None:
+        if self.convergence_canvas is None:
+            return
+
+        metric_name = self.metric_label_to_name[self.convergence_metric_var.get()]
+        history_series: list[tuple[str, list[float], str, int]] = []
+        laminar_values = [getattr(metric, metric_name) for metric in self.convergence_history["laminar"]]
+        turbulent_values = [getattr(metric, metric_name) for metric in self.convergence_history["turbulent"]]
+        if laminar_values:
+            history_series.append(("Laminar", laminar_values, "#1d3557", 0))
+        if turbulent_values:
+            history_series.append(
+                ("Turbulent", turbulent_values, "#c1121f", len(laminar_values))
+            )
+        if not history_series:
+            self.convergence_canvas.delete("all")
+            self.convergence_canvas.create_text(
+                20,
+                20,
+                anchor="nw",
+                text="No convergence data yet.",
+                fill="#555555",
+            )
+            return
+
+        self._draw_history_plot(self.convergence_canvas, history_series, metric_name)
+
+    def _draw_history_plot(
+        self,
+        canvas: tk.Canvas,
+        history_series: list[tuple[str, list[float], str, int]],
+        metric_name: str,
+    ) -> None:
+        canvas.delete("all")
+        width = int(canvas.winfo_width() or canvas["width"])
+        height = int(canvas.winfo_height() or canvas["height"])
+        if width < 160 or height < 120:
+            canvas.create_text(
+                20,
+                20,
+                anchor="nw",
+                text="Waiting for plot area...",
+                fill="#555555",
+            )
+            return
+
+        left = 70
+        right = width - 20
+        top = 20
+        bottom = height - 45
+        if right <= left or bottom <= top:
+            return
+
+        all_values = [
+            value
+            for _label, values, _color, _offset in history_series
+            for value in values
+            if value > 0.0
+        ]
+        if not all_values:
+            return
+
+        min_log = math.log10(min(all_values))
+        max_log = math.log10(max(all_values))
+        if math.isclose(min_log, max_log):
+            min_log -= 1.0
+            max_log += 1.0
+
+        max_index = max(
+            offset + len(values) - 1
+            for _label, values, _color, offset in history_series
+        )
+        x_den = max(max_index, 1)
+
+        canvas.create_line(left, top, left, bottom, fill="#333333", width=1.5)
+        canvas.create_line(left, bottom, right, bottom, fill="#333333", width=1.5)
+
+        for i in range(5):
+            frac = i / 4 if 4 else 0
+            y = top + (bottom - top) * frac
+            value_log = max_log - (max_log - min_log) * frac
+            value = 10**value_log
+            canvas.create_line(left, y, right, y, fill="#e6e6e6")
+            canvas.create_text(left - 8, y, text=f"{value:.1e}", anchor="e", font=("TkDefaultFont", 8))
+
+        for i in range(max_index + 1):
+            x = left + (right - left) * (i / x_den)
+            canvas.create_line(x, bottom, x, bottom + 4, fill="#333333")
+            canvas.create_text(x, bottom + 16, text=str(i + 1), anchor="n", font=("TkDefaultFont", 8))
+
+        canvas.create_text((left + right) / 2, height - 10, text="Iteration", anchor="s")
+        canvas.create_text(
+            16,
+            (top + bottom) / 2,
+            text=self._pretty_metric_name(metric_name),
+            angle=90,
+        )
+
+        for _label, values, color, offset in history_series:
+            points: list[float] = []
+            for idx, value in enumerate(values):
+                safe_value = value if value > 0.0 else min(all_values)
+                value_log = math.log10(safe_value)
+                x = left + (right - left) * ((offset + idx) / x_den)
+                y = top + (max_log - value_log) * (bottom - top) / (max_log - min_log)
+                points.extend((x, y))
+            if len(points) >= 4:
+                canvas.create_line(*points, fill=color, width=2, smooth=False)
+            elif len(points) == 2:
+                x, y = points
+                canvas.create_oval(x - 2, y - 2, x + 2, y + 2, fill=color, outline=color)
+
+    @staticmethod
+    def _pretty_metric_name(metric_name: str) -> str:
+        labels = {name: label for label, name in NetSimGui.METRIC_OPTIONS}
+        return labels.get(metric_name, metric_name)
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def main() -> None:
+    app = NetSimGui()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
