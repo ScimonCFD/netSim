@@ -1,0 +1,186 @@
+{
+  "material": {
+    "definition_mode": "library",
+    "library_key": "water_liquid",
+    "name": "Water",
+    "density_kg_per_m3": "998.25",
+    "viscosity_pa_s": "0.001"
+  },
+  "solver_settings": {
+    "pressure_relaxation_mode": "implicit",
+    "pressure_relaxation": 0.95,
+    "velocity_loop_method": "secant"
+  },
+  "nodes": [
+    {
+      "node_id": 1,
+      "node_type": "source",
+      "x": 120,
+      "y": 160,
+      "properties": {
+        "condition_type": "pressure",
+        "pressure": "251300.0",
+        "flow": ""
+      }
+    },
+    {
+      "node_id": 2,
+      "node_type": "junction",
+      "x": 320,
+      "y": 160,
+      "properties": {
+        "label": "2"
+      }
+    },
+    {
+      "node_id": 3,
+      "node_type": "junction",
+      "x": 540,
+      "y": 140,
+      "properties": {
+        "label": "3"
+      }
+    },
+    {
+      "node_id": 4,
+      "node_type": "junction",
+      "x": 430,
+      "y": 300,
+      "properties": {
+        "label": "4"
+      }
+    },
+    {
+      "node_id": 5,
+      "node_type": "source",
+      "x": 120,
+      "y": 340,
+      "properties": {
+        "condition_type": "pressure",
+        "pressure": "201300.0",
+        "flow": ""
+      }
+    },
+    {
+      "node_id": 6,
+      "node_type": "sink",
+      "x": 760,
+      "y": 140,
+      "properties": {
+        "condition_type": "pressure",
+        "pressure": "101300.0",
+        "flow": ""
+      }
+    }
+  ],
+  "links": [
+    {
+      "link_id": 1,
+      "start_node_id": 1,
+      "end_node_id": 2,
+      "components": [
+        {
+          "component_id": 1,
+          "component_type": "pipe",
+          "properties": {
+            "length_m": "200.0",
+            "diameter_m": "0.05",
+            "height_change_m": "0.0",
+            "roughness_m": "0.000045",
+            "num_segments": "1"
+          }
+        }
+      ]
+    },
+    {
+      "link_id": 2,
+      "start_node_id": 2,
+      "end_node_id": 3,
+      "components": [
+        {
+          "component_id": 2,
+          "component_type": "pipe",
+          "properties": {
+            "length_m": "30.0",
+            "diameter_m": "0.025",
+            "height_change_m": "0.0",
+            "roughness_m": "0.000045",
+            "num_segments": "1"
+          }
+        }
+      ]
+    },
+    {
+      "link_id": 3,
+      "start_node_id": 2,
+      "end_node_id": 4,
+      "components": [
+        {
+          "component_id": 3,
+          "component_type": "pipe",
+          "properties": {
+            "length_m": "40.0",
+            "diameter_m": "0.025",
+            "height_change_m": "0.0",
+            "roughness_m": "0.000045",
+            "num_segments": "1"
+          }
+        }
+      ]
+    },
+    {
+      "link_id": 4,
+      "start_node_id": 4,
+      "end_node_id": 3,
+      "components": [
+        {
+          "component_id": 4,
+          "component_type": "pipe",
+          "properties": {
+            "length_m": "15.0",
+            "diameter_m": "0.025",
+            "height_change_m": "0.0",
+            "roughness_m": "0.000045",
+            "num_segments": "1"
+          }
+        }
+      ]
+    },
+    {
+      "link_id": 5,
+      "start_node_id": 5,
+      "end_node_id": 4,
+      "components": [
+        {
+          "component_id": 5,
+          "component_type": "pipe",
+          "properties": {
+            "length_m": "300.0",
+            "diameter_m": "0.05",
+            "height_change_m": "0.0",
+            "roughness_m": "0.000045",
+            "num_segments": "1"
+          }
+        }
+      ]
+    },
+    {
+      "link_id": 6,
+      "start_node_id": 3,
+      "end_node_id": 6,
+      "components": [
+        {
+          "component_id": 6,
+          "component_type": "pipe",
+          "properties": {
+            "length_m": "60.0",
+            "diameter_m": "0.05",
+            "height_change_m": "0.0",
+            "roughness_m": "0.000045",
+            "num_segments": "1"
+          }
+        }
+      ]
+    }
+  ]
+}

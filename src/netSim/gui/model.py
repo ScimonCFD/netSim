@@ -212,6 +212,11 @@ class CanvasScene:
     def update_pressure_drop_model(self, pressure_drop_model: Dict[str, str]) -> None:
         self.pressure_drop_model = dict(pressure_drop_model)
 
+    def update_solver_settings(self, settings: Dict[str, float | int | str]) -> None:
+        updated_settings = dict(self.solver_settings)
+        updated_settings.update(settings)
+        self.solver_settings = updated_settings
+
     @staticmethod
     def _default_properties(node_type: str) -> Dict[str, str]:
         if node_type == "source":

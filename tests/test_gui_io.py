@@ -81,6 +81,40 @@ class GuiIoTests(unittest.TestCase):
                 result = build_solver_from_scene(scene).solve(case)
                 self.assertTrue(result.converged, msg=f"{gui_path} did not converge")
 
+    def test_all_implicit_alpha_09_gui_tutorial_scenes_build_and_converge(self) -> None:
+        tutorial_root = (
+            Path(__file__).resolve().parents[1]
+            / "tutorials"
+            / "steady_isothermal_incompressible_implicit_alpha_09"
+        )
+        gui_paths = sorted(tutorial_root.glob("*/*.gui.json"))
+
+        self.assertGreaterEqual(len(gui_paths), 6)
+
+        for gui_path in gui_paths:
+            with self.subTest(gui_path=gui_path.name):
+                scene = load_scene_from_file(gui_path)
+                case = build_network_case_from_scene(scene)
+                result = build_solver_from_scene(scene).solve(case)
+                self.assertTrue(result.converged, msg=f"{gui_path} did not converge")
+
+    def test_all_implicit_alpha_095_gui_tutorial_scenes_build_and_converge(self) -> None:
+        tutorial_root = (
+            Path(__file__).resolve().parents[1]
+            / "tutorials"
+            / "steady_isothermal_incompressible_implicit_alpha_095"
+        )
+        gui_paths = sorted(tutorial_root.glob("*/*.gui.json"))
+
+        self.assertGreaterEqual(len(gui_paths), 6)
+
+        for gui_path in gui_paths:
+            with self.subTest(gui_path=gui_path.name):
+                scene = load_scene_from_file(gui_path)
+                case = build_network_case_from_scene(scene)
+                result = build_solver_from_scene(scene).solve(case)
+                self.assertTrue(result.converged, msg=f"{gui_path} did not converge")
+
     def test_build_solver_uses_supported_default_pressure_drop_model(self) -> None:
         scene = load_scene_from_file(self._pipe_only_case_path())
 
@@ -88,3 +122,39 @@ class GuiIoTests(unittest.TestCase):
 
         self.assertEqual(scene.pressure_drop_model["library_key"], "colebrook_white")
         self.assertEqual(type(solver.turbulent_pipe_correlation).__name__, "ColebrookPipeCorrelation")
+        self.assertEqual(solver.settings.pressure_relaxation_mode, "explicit")
+        self.assertEqual(solver.settings.friction_factor_method, "newton")
+        self.assertEqual(solver.settings.velocity_loop_method, "fixed_point")
+
+    def test_build_solver_reads_implicit_relaxation_settings(self) -> None:
+        scene = load_scene_from_file(self._pipe_only_case_path())
+        scene.update_solver_settings(
+            {
+                "pressure_relaxation_mode": "implicit",
+                "pressure_relaxation": 0.5,
+                "friction_factor_method": "newton",
+                "velocity_loop_method": "secant",
+            }
+        )
+
+        solver = build_solver_from_scene(scene)
+
+        self.assertEqual(solver.settings.pressure_relaxation_mode, "implicit")
+        self.assertEqual(solver.settings.pressure_relaxation, 0.5)
+        self.assertEqual(solver.settings.friction_factor_method, "newton")
+        self.assertEqual(solver.settings.velocity_loop_method, "secant")
+
+    def test_pipe_only_scene_runs_with_implicit_relaxation(self) -> None:
+        scene = load_scene_from_file(self._pipe_only_case_path())
+        scene.update_solver_settings(
+            {
+                "pressure_relaxation_mode": "implicit",
+                "pressure_relaxation": 0.9,
+                "turbulent_iterations": 80,
+            }
+        )
+
+        case = build_network_case_from_scene(scene)
+        result = build_solver_from_scene(scene).solve(case)
+
+        self.assertTrue(result.converged)

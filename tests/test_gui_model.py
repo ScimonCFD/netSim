@@ -58,6 +58,25 @@ class GuiModelTests(unittest.TestCase):
         self.assertEqual(scene.pressure_drop_model["library_key"], "colebrook_white")
         self.assertEqual(scene.pressure_drop_model["name"], "Colebrook-White")
 
+    def test_update_solver_settings_merges_values(self) -> None:
+        scene = CanvasScene()
+
+        scene.update_solver_settings({"turbulent_iterations": 80})
+        scene.update_solver_settings(
+            {
+                "pressure_relaxation_mode": "implicit",
+                "pressure_relaxation": 0.5,
+                "friction_factor_method": "newton",
+                "velocity_loop_method": "secant",
+            }
+        )
+
+        self.assertEqual(scene.solver_settings["turbulent_iterations"], 80)
+        self.assertEqual(scene.solver_settings["pressure_relaxation_mode"], "implicit")
+        self.assertEqual(scene.solver_settings["pressure_relaxation"], 0.5)
+        self.assertEqual(scene.solver_settings["friction_factor_method"], "newton")
+        self.assertEqual(scene.solver_settings["velocity_loop_method"], "secant")
+
     def test_add_link_connects_two_existing_nodes(self) -> None:
         scene = CanvasScene()
         scene.set_active_tool("source")
