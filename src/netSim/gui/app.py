@@ -66,14 +66,6 @@ class NetSimGui:
             "name": "Colebrook-White",
         }
     }
-    RELAXATION_MODE_LIBRARY = {
-        "explicit": {
-            "name": "Explicit",
-        },
-        "implicit": {
-            "name": "Implicit",
-        },
-    }
     VELOCITY_LOOP_METHOD_LIBRARY = {
         "fixed_point": {
             "name": "Fixed-point",
@@ -492,7 +484,6 @@ class NetSimGui:
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
 
-        current_mode = str(self.scene.solver_settings.get("pressure_relaxation_mode", "explicit"))
         current_alpha = str(self.scene.solver_settings.get("pressure_relaxation", "1.0"))
         current_velocity_method = str(
             self.scene.solver_settings.get("velocity_loop_method", "fixed_point")
@@ -501,46 +492,18 @@ class NetSimGui:
             self.scene.solver_settings.get("friction_factor_method", "newton")
         )
 
-        mode_var = tk.StringVar(master=dialog, value=current_mode)
         alpha_var = tk.StringVar(master=dialog, value=current_alpha)
         velocity_method_var = tk.StringVar(master=dialog, value=current_velocity_method)
         friction_method_var = tk.StringVar(master=dialog, value=current_friction_method)
 
-        ttk.Label(frame, text="Relaxation Type").grid(
+        ttk.Label(frame, text="Pressure Relaxation").grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=4
         )
-        mode_box = ttk.Combobox(
-            frame,
-            textvariable=mode_var,
-            state="readonly",
-            values=tuple(self.RELAXATION_MODE_LIBRARY.keys()),
-            width=24,
-        )
-        mode_box.grid(row=0, column=1, sticky="ew", pady=4)
-
-        selected_name_var = tk.StringVar(
-            master=dialog,
-            value=self.RELAXATION_MODE_LIBRARY[mode_var.get()]["name"],
-        )
-        ttk.Label(frame, text="Selected Type").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        ttk.Label(
-            frame,
-            textvariable=selected_name_var,
-            relief="groove",
-            padding=6,
-            width=24,
-        ).grid(row=1, column=1, sticky="ew", pady=4)
-
-        ttk.Label(frame, text="Pressure Relaxation").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
-        )
         alpha_entry = ttk.Entry(frame, textvariable=alpha_var, width=26)
-        alpha_entry.grid(row=2, column=1, sticky="ew", pady=4)
+        alpha_entry.grid(row=0, column=1, sticky="ew", pady=4)
 
         ttk.Label(frame, text="Velocity Loop").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
         )
         velocity_method_box = ttk.Combobox(
             frame,
@@ -549,14 +512,14 @@ class NetSimGui:
             values=tuple(self.VELOCITY_LOOP_METHOD_LIBRARY.keys()),
             width=24,
         )
-        velocity_method_box.grid(row=3, column=1, sticky="ew", pady=4)
+        velocity_method_box.grid(row=1, column=1, sticky="ew", pady=4)
 
         velocity_name_var = tk.StringVar(
             master=dialog,
             value=self.VELOCITY_LOOP_METHOD_LIBRARY[velocity_method_var.get()]["name"],
         )
         ttk.Label(frame, text="Selected Velocity Loop").grid(
-            row=4, column=0, sticky="w", padx=(0, 8), pady=4
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Label(
             frame,
@@ -564,10 +527,10 @@ class NetSimGui:
             relief="groove",
             padding=6,
             width=24,
-        ).grid(row=4, column=1, sticky="ew", pady=4)
+        ).grid(row=2, column=1, sticky="ew", pady=4)
 
         ttk.Label(frame, text="Friction Factor").grid(
-            row=5, column=0, sticky="w", padx=(0, 8), pady=4
+            row=3, column=0, sticky="w", padx=(0, 8), pady=4
         )
         friction_method_box = ttk.Combobox(
             frame,
@@ -576,14 +539,14 @@ class NetSimGui:
             values=tuple(self.FRICTION_FACTOR_METHOD_LIBRARY.keys()),
             width=24,
         )
-        friction_method_box.grid(row=5, column=1, sticky="ew", pady=4)
+        friction_method_box.grid(row=3, column=1, sticky="ew", pady=4)
 
         friction_name_var = tk.StringVar(
             master=dialog,
             value=self.FRICTION_FACTOR_METHOD_LIBRARY[friction_method_var.get()]["name"],
         )
         ttk.Label(frame, text="Selected Friction Method").grid(
-            row=6, column=0, sticky="w", padx=(0, 8), pady=4
+            row=4, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Label(
             frame,
@@ -591,12 +554,7 @@ class NetSimGui:
             relief="groove",
             padding=6,
             width=24,
-        ).grid(row=6, column=1, sticky="ew", pady=4)
-
-        def apply_mode_selection(_event: tk.Event | None = None) -> None:
-            selected_name_var.set(
-                self.RELAXATION_MODE_LIBRARY[mode_var.get()]["name"]
-            )
+        ).grid(row=4, column=1, sticky="ew", pady=4)
 
         def apply_velocity_method_selection(_event: tk.Event | None = None) -> None:
             velocity_name_var.set(
@@ -608,19 +566,17 @@ class NetSimGui:
                 self.FRICTION_FACTOR_METHOD_LIBRARY[friction_method_var.get()]["name"]
             )
 
-        mode_box.bind("<<ComboboxSelected>>", apply_mode_selection)
         velocity_method_box.bind("<<ComboboxSelected>>", apply_velocity_method_selection)
         friction_method_box.bind("<<ComboboxSelected>>", apply_friction_method_selection)
 
         button_row = ttk.Frame(frame)
-        button_row.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        button_row.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(button_row, text="Cancel", command=dialog.destroy).pack(side="right")
         ttk.Button(
             button_row,
             text="Save",
             command=lambda: self._save_numerics_definition(
                 dialog,
-                mode_var,
                 alpha_var,
                 friction_method_var,
                 velocity_method_var,
@@ -632,7 +588,7 @@ class NetSimGui:
         dialog.wait_visibility()
         dialog.grab_set()
         dialog.focus_set()
-        mode_box.focus_set()
+        alpha_entry.focus_set()
 
     def _save_material_definition(
         self,
@@ -706,20 +662,10 @@ class NetSimGui:
     def _save_numerics_definition(
         self,
         dialog: tk.Toplevel,
-        mode_var: tk.StringVar,
         alpha_var: tk.StringVar,
         friction_method_var: tk.StringVar,
         velocity_method_var: tk.StringVar,
     ) -> None:
-        mode = mode_var.get().strip()
-        if mode not in self.RELAXATION_MODE_LIBRARY:
-            messagebox.showerror(
-                "Invalid numerics",
-                "Select a valid relaxation type.",
-                parent=dialog,
-            )
-            return
-
         try:
             alpha = float(alpha_var.get().strip())
         except ValueError:
@@ -758,7 +704,6 @@ class NetSimGui:
 
         self.scene.update_solver_settings(
             {
-                "pressure_relaxation_mode": mode,
                 "pressure_relaxation": alpha,
                 "friction_factor_method": friction_method,
                 "velocity_loop_method": velocity_method,
@@ -767,7 +712,7 @@ class NetSimGui:
         self._refresh_global_summaries()
         self.status_var.set(
             "Numerics updated: "
-            f"{self.RELAXATION_MODE_LIBRARY[mode]['name']} (alpha={alpha:g}), "
+            f"Explicit relaxation (alpha={alpha:g}), "
             f"{self.FRICTION_FACTOR_METHOD_LIBRARY[friction_method]['name']} for friction, "
             f"{self.VELOCITY_LOOP_METHOD_LIBRARY[velocity_method]['name']}."
         )
@@ -799,7 +744,6 @@ class NetSimGui:
         return "Not defined"
 
     def _numerics_summary_text(self) -> str:
-        mode = str(self.scene.solver_settings.get("pressure_relaxation_mode", "explicit"))
         alpha = self.scene.solver_settings.get("pressure_relaxation", 1.0)
         velocity_method = str(
             self.scene.solver_settings.get("velocity_loop_method", "fixed_point")
@@ -807,7 +751,6 @@ class NetSimGui:
         friction_method = str(
             self.scene.solver_settings.get("friction_factor_method", "newton")
         )
-        mode_name = self.RELAXATION_MODE_LIBRARY.get(mode, {}).get("name", mode)
         friction_method_name = self.FRICTION_FACTOR_METHOD_LIBRARY.get(
             friction_method,
             {},
@@ -817,7 +760,7 @@ class NetSimGui:
             {},
         ).get("name", velocity_method)
         return (
-            f"{mode_name}\nalpha={alpha}\n"
+            f"Explicit\nalpha={alpha}\n"
             f"friction={friction_method_name}\n"
             f"velocity={velocity_method_name}"
         )

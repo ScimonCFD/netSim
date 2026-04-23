@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
-
 from netSim.closures import ColebrookPipeCorrelation, LaminarPipeCorrelation, MinorLossModel
 from netSim.core.components import Fitting, Pipe
 from netSim.core.network import build_network_state
@@ -120,22 +118,16 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
     ) -> tuple[list[float], list[IterationMetrics]]:
         history = []
         metrics_history = []
-        previous_correction = np.zeros(len(network_state.nodes), dtype=float)
         for iteration_index in range(self._get_laminar_iteration_count(network_state)):
             self._update_velocities(network_state, fluid_model, laminar=True)
             self._update_mass_flows(network_state, fluid_model)
             couplings = self._compute_couplings(network_state, fluid_model, laminar=True)
             matrix, vector = assemble_pressure_system(network_state, couplings)
-            correction = self._solve_pressure_correction(
-                matrix,
-                vector,
-                previous_correction,
-            )
+            correction = self._solve_pressure_correction(matrix, vector)
             correction_abs, correction_mean_abs, correction_rel = self._apply_pressure_correction(
                 network_state,
                 correction,
             )
-            previous_correction = correction
             history.append(correction_abs)
             self._update_velocities(network_state, fluid_model, laminar=True)
             self._update_mass_flows(network_state, fluid_model)
@@ -175,22 +167,16 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
         history = []
         metrics_history = []
         converged = False
-        previous_correction = np.zeros(len(network_state.nodes), dtype=float)
         for iteration_index in range(self.settings.turbulent_iterations):
             self._update_velocities(network_state, fluid_model, laminar=False)
             self._update_mass_flows(network_state, fluid_model)
             couplings = self._compute_couplings(network_state, fluid_model, laminar=False)
             matrix, vector = assemble_pressure_system(network_state, couplings)
-            correction = self._solve_pressure_correction(
-                matrix,
-                vector,
-                previous_correction,
-            )
+            correction = self._solve_pressure_correction(matrix, vector)
             correction_abs, correction_mean_abs, correction_rel = self._apply_pressure_correction(
                 network_state,
                 correction,
             )
-            previous_correction = correction
             history.append(correction_abs)
             self._update_velocities(network_state, fluid_model, laminar=False)
             self._update_mass_flows(network_state, fluid_model)
@@ -221,24 +207,10 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
                 break
         return history, metrics_history, converged
 
-    def _solve_pressure_correction(self, matrix, vector, previous_correction):
-        mode = self.settings.pressure_relaxation_mode
-        alpha = float(self.settings.pressure_relaxation)
-
-        if mode not in {"explicit", "implicit"}:
-            raise ValueError(f"Unsupported pressure relaxation mode: {mode}")
-
-        if alpha <= 0.0:
+    def _solve_pressure_correction(self, matrix, vector):
+        if float(self.settings.pressure_relaxation) <= 0.0:
             raise ValueError("pressure_relaxation must be greater than zero.")
-
-        if mode == "explicit" or np.isclose(alpha, 1.0):
-            return solve_linear_system(matrix, vector)
-
-        relaxed_vector = (
-            vector / alpha
-            - ((1.0 - alpha) / alpha) * matrix.dot(previous_correction)
-        )
-        return solve_linear_system(matrix, relaxed_vector)
+        return solve_linear_system(matrix, vector)
 
     def _build_iteration_metrics(
         self,
@@ -330,15 +302,9 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
         scaled_correction = []
         relative_corrections = []
         alpha = float(self.settings.pressure_relaxation)
-        mode = self.settings.pressure_relaxation_mode
         for idx, node_id in enumerate(sorted(network_state.nodes)):
             correction_value = float(correction[idx])
-            if mode == "explicit":
-                delta_p = alpha * correction_value
-            elif mode == "implicit":
-                delta_p = correction_value
-            else:
-                raise ValueError(f"Unsupported pressure relaxation mode: {mode}")
+            delta_p = alpha * correction_value
             old_pressure = float(network_state.nodes[node_id].pressure_pa)
             new_pressure = old_pressure + delta_p
             network_state.nodes[node_id].pressure_pa = new_pressure

@@ -8,7 +8,6 @@ class SolverSettings:
     laminar_iterations_without_fittings: int = 1
     laminar_iterations_with_fittings: int = 7
     turbulent_iterations: int = 60
-    pressure_relaxation_mode: str = "explicit"
     pressure_relaxation: float = 1.0
     friction_factor_method: str = "newton"
     velocity_loop_method: str = "fixed_point"

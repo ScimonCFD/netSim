@@ -64,7 +64,6 @@ class GuiModelTests(unittest.TestCase):
         scene.update_solver_settings({"turbulent_iterations": 80})
         scene.update_solver_settings(
             {
-                "pressure_relaxation_mode": "implicit",
                 "pressure_relaxation": 0.5,
                 "friction_factor_method": "newton",
                 "velocity_loop_method": "secant",
@@ -72,7 +71,6 @@ class GuiModelTests(unittest.TestCase):
         )
 
         self.assertEqual(scene.solver_settings["turbulent_iterations"], 80)
-        self.assertEqual(scene.solver_settings["pressure_relaxation_mode"], "implicit")
         self.assertEqual(scene.solver_settings["pressure_relaxation"], 0.5)
         self.assertEqual(scene.solver_settings["friction_factor_method"], "newton")
         self.assertEqual(scene.solver_settings["velocity_loop_method"], "secant")
