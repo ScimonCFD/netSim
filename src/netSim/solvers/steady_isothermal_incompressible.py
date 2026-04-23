@@ -258,7 +258,9 @@ class SteadyIsothermalIncompressibleSolver(BaseSolver):
                         viscosity,
                         self.settings.colebrook_residual_tolerance,
                         self.settings.friction_factor_method,
+                        self.settings.friction_factor_max_iterations,
                         self.settings.velocity_loop_method,
+                        self.settings.velocity_loop_max_iterations,
                     )
             elif isinstance(link_state, FittingState):
                 link_state.velocity_m_per_s = correlation.calculate_velocity(

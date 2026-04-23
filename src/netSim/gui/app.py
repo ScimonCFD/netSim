@@ -139,7 +139,7 @@ class NetSimGui:
 
         numerics_menu = tk.Menu(menu_bar, tearoff=False)
         numerics_menu.add_command(
-            label="Define Relaxation",
+            label="Define Numerics",
             command=self._open_numerics_dialog,
         )
         menu_bar.add_cascade(label="Numerics", menu=numerics_menu)
@@ -484,26 +484,74 @@ class NetSimGui:
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
 
+        current_laminar_iterations = str(
+            self.scene.solver_settings.get("laminar_iterations", "")
+        )
+        current_turbulent_iterations = str(
+            self.scene.solver_settings.get("turbulent_iterations", "60")
+        )
         current_alpha = str(self.scene.solver_settings.get("pressure_relaxation", "1.0"))
+        current_friction_max_iterations = str(
+            self.scene.solver_settings.get("friction_factor_max_iterations", "50")
+        )
         current_velocity_method = str(
             self.scene.solver_settings.get("velocity_loop_method", "fixed_point")
+        )
+        current_velocity_max_iterations = str(
+            self.scene.solver_settings.get("velocity_loop_max_iterations", "50")
         )
         current_friction_method = str(
             self.scene.solver_settings.get("friction_factor_method", "newton")
         )
 
         alpha_var = tk.StringVar(master=dialog, value=current_alpha)
+        friction_max_iterations_var = tk.StringVar(
+            master=dialog,
+            value=current_friction_max_iterations,
+        )
         velocity_method_var = tk.StringVar(master=dialog, value=current_velocity_method)
+        velocity_max_iterations_var = tk.StringVar(
+            master=dialog,
+            value=current_velocity_max_iterations,
+        )
         friction_method_var = tk.StringVar(master=dialog, value=current_friction_method)
+        laminar_iterations_var = tk.StringVar(
+            master=dialog,
+            value=current_laminar_iterations,
+        )
+        turbulent_iterations_var = tk.StringVar(
+            master=dialog,
+            value=current_turbulent_iterations,
+        )
 
-        ttk.Label(frame, text="Pressure Relaxation").grid(
+        ttk.Label(frame, text="Laminar Iterations").grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=4
         )
+        laminar_iterations_entry = ttk.Entry(
+            frame,
+            textvariable=laminar_iterations_var,
+            width=26,
+        )
+        laminar_iterations_entry.grid(row=0, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Turbulent Iterations").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        turbulent_iterations_entry = ttk.Entry(
+            frame,
+            textvariable=turbulent_iterations_var,
+            width=26,
+        )
+        turbulent_iterations_entry.grid(row=1, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Pressure Relaxation").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
+        )
         alpha_entry = ttk.Entry(frame, textvariable=alpha_var, width=26)
-        alpha_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        alpha_entry.grid(row=2, column=1, sticky="ew", pady=4)
 
         ttk.Label(frame, text="Velocity Loop").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+            row=3, column=0, sticky="w", padx=(0, 8), pady=4
         )
         velocity_method_box = ttk.Combobox(
             frame,
@@ -512,14 +560,14 @@ class NetSimGui:
             values=tuple(self.VELOCITY_LOOP_METHOD_LIBRARY.keys()),
             width=24,
         )
-        velocity_method_box.grid(row=1, column=1, sticky="ew", pady=4)
+        velocity_method_box.grid(row=3, column=1, sticky="ew", pady=4)
 
         velocity_name_var = tk.StringVar(
             master=dialog,
             value=self.VELOCITY_LOOP_METHOD_LIBRARY[velocity_method_var.get()]["name"],
         )
         ttk.Label(frame, text="Selected Velocity Loop").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
+            row=4, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Label(
             frame,
@@ -527,10 +575,20 @@ class NetSimGui:
             relief="groove",
             padding=6,
             width=24,
-        ).grid(row=2, column=1, sticky="ew", pady=4)
+        ).grid(row=4, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Velocity Max Iterations").grid(
+            row=5, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        velocity_max_iterations_entry = ttk.Entry(
+            frame,
+            textvariable=velocity_max_iterations_var,
+            width=26,
+        )
+        velocity_max_iterations_entry.grid(row=5, column=1, sticky="ew", pady=4)
 
         ttk.Label(frame, text="Friction Factor").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+            row=6, column=0, sticky="w", padx=(0, 8), pady=4
         )
         friction_method_box = ttk.Combobox(
             frame,
@@ -539,14 +597,14 @@ class NetSimGui:
             values=tuple(self.FRICTION_FACTOR_METHOD_LIBRARY.keys()),
             width=24,
         )
-        friction_method_box.grid(row=3, column=1, sticky="ew", pady=4)
+        friction_method_box.grid(row=6, column=1, sticky="ew", pady=4)
 
         friction_name_var = tk.StringVar(
             master=dialog,
             value=self.FRICTION_FACTOR_METHOD_LIBRARY[friction_method_var.get()]["name"],
         )
         ttk.Label(frame, text="Selected Friction Method").grid(
-            row=4, column=0, sticky="w", padx=(0, 8), pady=4
+            row=7, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Label(
             frame,
@@ -554,7 +612,17 @@ class NetSimGui:
             relief="groove",
             padding=6,
             width=24,
-        ).grid(row=4, column=1, sticky="ew", pady=4)
+        ).grid(row=7, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frame, text="Friction Max Iterations").grid(
+            row=8, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        friction_max_iterations_entry = ttk.Entry(
+            frame,
+            textvariable=friction_max_iterations_var,
+            width=26,
+        )
+        friction_max_iterations_entry.grid(row=8, column=1, sticky="ew", pady=4)
 
         def apply_velocity_method_selection(_event: tk.Event | None = None) -> None:
             velocity_name_var.set(
@@ -570,16 +638,20 @@ class NetSimGui:
         friction_method_box.bind("<<ComboboxSelected>>", apply_friction_method_selection)
 
         button_row = ttk.Frame(frame)
-        button_row.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        button_row.grid(row=9, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(button_row, text="Cancel", command=dialog.destroy).pack(side="right")
         ttk.Button(
             button_row,
             text="Save",
             command=lambda: self._save_numerics_definition(
                 dialog,
+                laminar_iterations_var,
+                turbulent_iterations_var,
                 alpha_var,
                 friction_method_var,
+                friction_max_iterations_var,
                 velocity_method_var,
+                velocity_max_iterations_var,
             ),
         ).pack(side="right", padx=(0, 8))
 
@@ -588,7 +660,7 @@ class NetSimGui:
         dialog.wait_visibility()
         dialog.grab_set()
         dialog.focus_set()
-        alpha_entry.focus_set()
+        laminar_iterations_entry.focus_set()
 
     def _save_material_definition(
         self,
@@ -662,10 +734,54 @@ class NetSimGui:
     def _save_numerics_definition(
         self,
         dialog: tk.Toplevel,
+        laminar_iterations_var: tk.StringVar,
+        turbulent_iterations_var: tk.StringVar,
         alpha_var: tk.StringVar,
         friction_method_var: tk.StringVar,
+        friction_max_iterations_var: tk.StringVar,
         velocity_method_var: tk.StringVar,
+        velocity_max_iterations_var: tk.StringVar,
     ) -> None:
+        laminar_iterations_text = laminar_iterations_var.get().strip()
+        if laminar_iterations_text:
+            try:
+                laminar_iterations: int | None = int(laminar_iterations_text)
+            except ValueError:
+                messagebox.showerror(
+                    "Invalid numerics",
+                    "Laminar iterations must be an integer.",
+                    parent=dialog,
+                )
+                return
+
+            if laminar_iterations <= 0:
+                messagebox.showerror(
+                    "Invalid numerics",
+                    "Laminar iterations must be greater than zero.",
+                    parent=dialog,
+                )
+                return
+        else:
+            laminar_iterations = None
+
+        try:
+            turbulent_iterations = int(turbulent_iterations_var.get().strip())
+        except ValueError:
+            messagebox.showerror(
+                "Invalid numerics",
+                "Turbulent iterations must be an integer.",
+                parent=dialog,
+            )
+            return
+
+        if turbulent_iterations <= 0:
+            messagebox.showerror(
+                "Invalid numerics",
+                "Turbulent iterations must be greater than zero.",
+                parent=dialog,
+            )
+            return
+
         try:
             alpha = float(alpha_var.get().strip())
         except ValueError:
@@ -684,11 +800,47 @@ class NetSimGui:
             )
             return
 
+        try:
+            friction_max_iterations = int(friction_max_iterations_var.get().strip())
+        except ValueError:
+            messagebox.showerror(
+                "Invalid numerics",
+                "Friction max iterations must be an integer.",
+                parent=dialog,
+            )
+            return
+
+        if friction_max_iterations <= 0:
+            messagebox.showerror(
+                "Invalid numerics",
+                "Friction max iterations must be greater than zero.",
+                parent=dialog,
+            )
+            return
+
         velocity_method = velocity_method_var.get().strip()
         if velocity_method not in self.VELOCITY_LOOP_METHOD_LIBRARY:
             messagebox.showerror(
                 "Invalid numerics",
                 "Select a valid velocity loop method.",
+                parent=dialog,
+            )
+            return
+
+        try:
+            velocity_max_iterations = int(velocity_max_iterations_var.get().strip())
+        except ValueError:
+            messagebox.showerror(
+                "Invalid numerics",
+                "Velocity max iterations must be an integer.",
+                parent=dialog,
+            )
+            return
+
+        if velocity_max_iterations <= 0:
+            messagebox.showerror(
+                "Invalid numerics",
+                "Velocity max iterations must be greater than zero.",
                 parent=dialog,
             )
             return
@@ -704,17 +856,25 @@ class NetSimGui:
 
         self.scene.update_solver_settings(
             {
+                "laminar_iterations": laminar_iterations,
+                "turbulent_iterations": turbulent_iterations,
                 "pressure_relaxation": alpha,
                 "friction_factor_method": friction_method,
+                "friction_factor_max_iterations": friction_max_iterations,
                 "velocity_loop_method": velocity_method,
+                "velocity_loop_max_iterations": velocity_max_iterations,
             }
         )
         self._refresh_global_summaries()
         self.status_var.set(
             "Numerics updated: "
+            f"laminar={'auto' if laminar_iterations is None else laminar_iterations}, "
+            f"turbulent={turbulent_iterations}, "
             f"Explicit relaxation (alpha={alpha:g}), "
-            f"{self.FRICTION_FACTOR_METHOD_LIBRARY[friction_method]['name']} for friction, "
-            f"{self.VELOCITY_LOOP_METHOD_LIBRARY[velocity_method]['name']}."
+            f"{self.FRICTION_FACTOR_METHOD_LIBRARY[friction_method]['name']} "
+            f"(max={friction_max_iterations}) for friction, "
+            f"{self.VELOCITY_LOOP_METHOD_LIBRARY[velocity_method]['name']} "
+            f"(max={velocity_max_iterations})."
         )
         dialog.destroy()
 
@@ -744,12 +904,18 @@ class NetSimGui:
         return "Not defined"
 
     def _numerics_summary_text(self) -> str:
+        laminar_iterations = self.scene.solver_settings.get("laminar_iterations")
+        turbulent_iterations = self.scene.solver_settings.get("turbulent_iterations", 60)
         alpha = self.scene.solver_settings.get("pressure_relaxation", 1.0)
         velocity_method = str(
             self.scene.solver_settings.get("velocity_loop_method", "fixed_point")
         )
         friction_method = str(
             self.scene.solver_settings.get("friction_factor_method", "newton")
+        )
+        friction_max_iterations = self.scene.solver_settings.get(
+            "friction_factor_max_iterations",
+            50,
         )
         friction_method_name = self.FRICTION_FACTOR_METHOD_LIBRARY.get(
             friction_method,
@@ -759,10 +925,16 @@ class NetSimGui:
             velocity_method,
             {},
         ).get("name", velocity_method)
+        velocity_max_iterations = self.scene.solver_settings.get(
+            "velocity_loop_max_iterations",
+            50,
+        )
         return (
+            f"laminar={'auto' if laminar_iterations is None else laminar_iterations}\n"
+            f"turbulent={turbulent_iterations}\n"
             f"Explicit\nalpha={alpha}\n"
-            f"friction={friction_method_name}\n"
-            f"velocity={velocity_method_name}"
+            f"friction={friction_method_name} ({friction_max_iterations})\n"
+            f"velocity={velocity_method_name} ({velocity_max_iterations})"
         )
 
     def _run_simulation(self) -> None:
@@ -1514,6 +1686,7 @@ class NetSimGui:
             for _label, values, _color, offset in history_series
         )
         x_den = max(max_index, 1)
+        total_iterations = max_index + 1
 
         canvas.create_line(left, top, left, bottom, fill="#333333", width=1.5)
         canvas.create_line(left, bottom, right, bottom, fill="#333333", width=1.5)
@@ -1526,10 +1699,38 @@ class NetSimGui:
             canvas.create_line(left, y, right, y, fill="#e6e6e6")
             canvas.create_text(left - 8, y, text=f"{value:.1e}", anchor="e", font=("TkDefaultFont", 8))
 
-        for i in range(max_index + 1):
+        tick_count = min(10, total_iterations)
+        tick_indices = sorted(
+            {
+                round(i * max_index / max(tick_count - 1, 1))
+                for i in range(tick_count)
+            }
+        )
+        for i in tick_indices:
             x = left + (right - left) * (i / x_den)
             canvas.create_line(x, bottom, x, bottom + 4, fill="#333333")
             canvas.create_text(x, bottom + 16, text=str(i + 1), anchor="n", font=("TkDefaultFont", 8))
+
+        if history_series and len(history_series) == 2:
+            transition_index = history_series[1][3]
+            if 0 < transition_index <= max_index:
+                transition_x = left + (right - left) * (transition_index / x_den)
+                canvas.create_line(
+                    transition_x,
+                    top,
+                    transition_x,
+                    bottom,
+                    fill="#999999",
+                    dash=(4, 3),
+                )
+                canvas.create_text(
+                    transition_x + 4,
+                    top + 10,
+                    text="turbulent",
+                    anchor="nw",
+                    fill="#666666",
+                    font=("TkDefaultFont", 8),
+                )
 
         canvas.create_text((left + right) / 2, height - 10, text="Iteration", anchor="s")
         canvas.create_text(
@@ -1549,6 +1750,20 @@ class NetSimGui:
                 points.extend((x, y))
             if len(points) >= 4:
                 canvas.create_line(*points, fill=color, width=2, smooth=False)
+                if len(values) <= 20:
+                    for idx, value in enumerate(values):
+                        safe_value = value if value > 0.0 else min(all_values)
+                        value_log = math.log10(safe_value)
+                        x = left + (right - left) * ((offset + idx) / x_den)
+                        y = top + (max_log - value_log) * (bottom - top) / (max_log - min_log)
+                        canvas.create_oval(
+                            x - 2,
+                            y - 2,
+                            x + 2,
+                            y + 2,
+                            fill=color,
+                            outline=color,
+                        )
             elif len(points) == 2:
                 x, y = points
                 canvas.create_oval(x - 2, y - 2, x + 2, y + 2, fill=color, outline=color)

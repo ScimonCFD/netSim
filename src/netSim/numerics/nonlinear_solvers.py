@@ -103,11 +103,11 @@ class NewtonSolver(NonlinearSolver):
         return value
 
 
-def build_nonlinear_solver(method_name: str) -> NonlinearSolver:
+def build_nonlinear_solver(method_name: str, max_iterations: int = 50) -> NonlinearSolver:
     if method_name == "fixed_point":
-        return FixedPointSolver()
+        return FixedPointSolver(max_iterations=max_iterations)
     if method_name == "secant":
-        return SecantSolver()
+        return SecantSolver(max_iterations=max_iterations)
     if method_name == "newton":
-        return NewtonSolver()
+        return NewtonSolver(max_iterations=max_iterations)
     raise ValueError(f"Unsupported nonlinear method: {method_name}")

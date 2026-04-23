@@ -64,16 +64,22 @@ class GuiModelTests(unittest.TestCase):
         scene.update_solver_settings({"turbulent_iterations": 80})
         scene.update_solver_settings(
             {
+                "laminar_iterations": 12,
                 "pressure_relaxation": 0.5,
                 "friction_factor_method": "newton",
+                "friction_factor_max_iterations": 80,
                 "velocity_loop_method": "secant",
+                "velocity_loop_max_iterations": 120,
             }
         )
 
+        self.assertEqual(scene.solver_settings["laminar_iterations"], 12)
         self.assertEqual(scene.solver_settings["turbulent_iterations"], 80)
         self.assertEqual(scene.solver_settings["pressure_relaxation"], 0.5)
         self.assertEqual(scene.solver_settings["friction_factor_method"], "newton")
+        self.assertEqual(scene.solver_settings["friction_factor_max_iterations"], 80)
         self.assertEqual(scene.solver_settings["velocity_loop_method"], "secant")
+        self.assertEqual(scene.solver_settings["velocity_loop_max_iterations"], 120)
 
     def test_add_link_connects_two_existing_nodes(self) -> None:
         scene = CanvasScene()

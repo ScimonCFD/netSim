@@ -39,7 +39,9 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
         viscosity: float,
         tolerance: float | None = None,
         friction_factor_method: str = "newton",
+        friction_factor_max_iterations: int = 50,
         velocity_loop_method: str = "fixed_point",
+        velocity_loop_max_iterations: int = 50,
     ) -> float:
         if tolerance is None:
             raise ValueError("ColebrookPipeCorrelation requires a tolerance value.")
@@ -54,6 +56,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
                 viscosity,
                 tolerance,
                 friction_factor_method,
+                friction_factor_max_iterations,
             ),
             residual_fn=lambda velocity: self._velocity_residual(
                 pipe_state,
@@ -63,9 +66,13 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
                 viscosity,
                 tolerance,
                 friction_factor_method,
+                friction_factor_max_iterations,
             ),
         )
-        solver = build_nonlinear_solver(velocity_loop_method)
+        solver = build_nonlinear_solver(
+            velocity_loop_method,
+            max_iterations=velocity_loop_max_iterations,
+        )
         solved_velocity = solver.solve(problem, initial_velocity, tolerance)
         self._assign_pipe_state(
             pipe_state,
@@ -74,6 +81,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
             viscosity,
             tolerance,
             friction_factor_method,
+            friction_factor_max_iterations,
         )
         return pipe_state.velocity_m_per_s
 
@@ -86,6 +94,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
         viscosity: float,
         tolerance: float,
         friction_factor_method: str,
+        friction_factor_max_iterations: int,
     ) -> float:
         safe_velocity = self._safe_velocity_guess(velocity)
         friction_factor, _ = self._friction_factor_for_velocity(
@@ -95,6 +104,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
             viscosity,
             tolerance,
             friction_factor_method,
+            friction_factor_max_iterations,
         )
         driving_term = delta_p - elevation_pressure_term(
             density,
@@ -121,6 +131,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
         viscosity: float,
         tolerance: float,
         friction_factor_method: str,
+        friction_factor_max_iterations: int,
     ) -> float:
         safe_velocity = self._safe_velocity_guess(velocity)
         friction_factor, _ = self._friction_factor_for_velocity(
@@ -130,6 +141,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
             viscosity,
             tolerance,
             friction_factor_method,
+            friction_factor_max_iterations,
         )
 
         driving_term = delta_p - elevation_pressure_term(
@@ -154,6 +166,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
         viscosity: float,
         tolerance: float,
         friction_factor_method: str,
+        friction_factor_max_iterations: int,
     ) -> tuple[float, float]:
         reynolds = density * abs(velocity) * pipe_state.component.diameter_m / viscosity
         pipe_state.reynolds = reynolds
@@ -163,6 +176,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
             initial_guess,
             tolerance,
             friction_factor_method,
+            friction_factor_max_iterations,
         )
         return friction_factor, reynolds
 
@@ -174,6 +188,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
         viscosity: float,
         tolerance: float,
         friction_factor_method: str,
+        friction_factor_max_iterations: int,
     ) -> None:
         safe_velocity = self._safe_velocity_guess(velocity)
         friction_factor, reynolds = self._friction_factor_for_velocity(
@@ -183,6 +198,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
             viscosity,
             tolerance,
             friction_factor_method,
+            friction_factor_max_iterations,
         )
         pipe_state.velocity_m_per_s = safe_velocity
         pipe_state.reynolds = reynolds
@@ -212,6 +228,7 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
         initial_guess: float,
         tolerance: float,
         friction_factor_method: str,
+        friction_factor_max_iterations: int,
     ) -> float:
         problem = NonlinearProblem(
             residual_fn=lambda friction_factor: self.evaluate_colebrook(
@@ -223,7 +240,10 @@ class ColebrookPipeCorrelation(PressureDropCorrelation):
                 friction_factor,
             ),
         )
-        solver = build_nonlinear_solver(friction_factor_method)
+        solver = build_nonlinear_solver(
+            friction_factor_method,
+            max_iterations=friction_factor_max_iterations,
+        )
         friction_factor = solver.solve(problem, initial_guess, tolerance)
         return max(abs(friction_factor), 1e-8)
 

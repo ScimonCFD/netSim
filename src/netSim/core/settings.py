@@ -10,7 +10,9 @@ class SolverSettings:
     turbulent_iterations: int = 60
     pressure_relaxation: float = 1.0
     friction_factor_method: str = "newton"
+    friction_factor_max_iterations: int = 50
     velocity_loop_method: str = "fixed_point"
+    velocity_loop_max_iterations: int = 50
     colebrook_residual_tolerance: float = 1e-4
     pressure_correction_abs_tolerance_pa: float = 1e-3
     pressure_correction_rel_tolerance: float = 1e-8
